@@ -1,0 +1,71 @@
+# LPDDR Test Automation Configuration
+
+# シリアル通信設定
+serial:
+  port: "/dev/ttyUSB0"  # Linux: /dev/ttyUSB0, Windows: COM3
+  baudrate: 115200
+  timeout: 30.0
+  parity: "N"
+  stopbits: 1
+  bytesize: 8
+
+# テスト設定
+test:
+  # テストする周波数（MHz）
+  frequencies: [800, 666]
+  
+  # テストパターン
+  patterns:
+    - id: 1
+      name: "test_lpddrA"
+      description: "increment by byte"
+    - id: 15
+      name: "test_lpddr_bitwalk"
+      description: "bit walk test"
+  
+  # 診断テスト設定
+  diagnostics:
+    addr_low: "0000"
+    addr_high: "03ff"
+    loop_count: "00"
+  
+  # テストバイト数（全範囲テスト）
+  test_bytes: 2147483648
+  
+  # 2Dトレーニング設定
+  enable_2d_training: false
+  
+  # アイパターンテスト設定
+  enable_eye_pattern: true
+  eye_pattern:
+    lanes: 4  # テストするレーン数
+    bits: 8   # テストするビット数
+    timeout: 30.0  # テストタイムアウト（秒）
+
+# 電源制御設定
+power_control:
+  enabled: false
+  port: "COM4"  # 電源制御用ポート
+  baudrate: 9600
+  power_off_delay: 2.0  # 電源OFF待機時間（秒）
+  power_on_delay: 3.0   # 電源ON待機時間（秒）
+
+# ログ設定
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "lpddr_test.log"
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+
+# 結果判定設定
+judgment:
+  # 各条件での判定メッセージ
+  messages:
+    freq_800_pattern_01_pass: "メモリは動作しているが不安定な可能性があります"
+    freq_800_pattern_15_pass: "信号線は接続されているが、メモリアクセスが不安定です"
+    freq_666_pattern_01_pass: "800MHzでは動作しないが666MHzでは動作します"
+    freq_666_pattern_15_pass: "666MHzで信号線接続が確認されました"
+    memory_fail_diag_pass: "メモリは動作しているが不安定な可能性があります"
+    all_fail: "メモリが動作していません"
+  
+  # 診断テストが必要な条件
+  require_diagnostics: true
