@@ -19,6 +19,7 @@ from constants import (
 from validators import ConfigValidator, StringValidator
 from exceptions import ValidationError, ConfigurationError
 from logger_config import get_test_logger
+from visualization import LPDDRVisualizer
 
 class LPDDRTestGUI:
     def __init__(self, root):
@@ -33,6 +34,7 @@ class LPDDRTestGUI:
         self.is_test_running = False
         self.test_progress = 0
         self.total_steps = 0
+        self.visualizer = LPDDRVisualizer()
         
         self.setup_ui()
         self.load_default_config()
@@ -89,6 +91,9 @@ class LPDDRTestGUI:
         ttk.Button(control_frame, text="設定保存", command=self.save_config).grid(row=0, column=2, padx=(0, 5))
         ttk.Button(control_frame, text="設定読み込み", command=self.load_config).grid(row=0, column=3, padx=(0, 5))
         
+        # ビジュアライズボタン
+        ttk.Button(control_frame, text="結果可視化", command=self.show_visualizations).grid(row=0, column=6, padx=(0, 5))
+        
         # プログレスバー
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(
@@ -131,6 +136,9 @@ class LPDDRTestGUI:
         
         # 結果エクスポートボタン
         ttk.Button(result_frame, text="結果エクスポート", command=self.export_results).grid(row=1, column=0, pady=(5, 0))
+        
+        # ビジュアライズエクスポートボタン
+        ttk.Button(result_frame, text="可視化エクスポート", command=self.export_visualizations).grid(row=1, column=1, pady=(5, 0), padx=(5, 0))
         
         # グリッドの重み設定
         self.root.columnconfigure(0, weight=1)
@@ -482,6 +490,75 @@ class LPDDRTestGUI:
             except Exception as e:
                 self.log_message(f"結果エクスポートに失敗しました: {e}", "ERROR")
                 messagebox.showerror("エラー", f"結果エクスポートに失敗しました: {e}")
+    
+    def show_visualizations(self):
+        """ビジュアライズ結果を表示"""
+        if not self.automation or not self.automation.test_results:
+            messagebox.showwarning("警告", "表示するテスト結果がありません")
+            return
+        
+        try:
+            # アイパターン結果がある場合は表示
+            if hasattr(self.automation, 'eye_pattern_results') and self.automation.eye_pattern_results:
+                self.visualizer.visualize_eye_pattern_results(
+                    self.automation.eye_pattern_results, 
+                    save_plot=True, 
+                    show_plot=True
+                )
+            
+            # タイムライン表示
+            self.visualizer.visualize_test_timeline(
+                self.automation.test_results,
+                save_plot=True,
+                show_plot=True
+            )
+            
+            self.log_message("ビジュアライズ結果を表示しました", "SUCCESS")
+            
+        except Exception as e:
+            self.log_message(f"ビジュアライズ表示に失敗しました: {e}", "ERROR")
+            messagebox.showerror("エラー", f"ビジュアライズ表示に失敗しました: {e}")
+    
+    def export_visualizations(self):
+        """ビジュアライズ結果をエクスポート"""
+        if not self.automation or not self.automation.test_results:
+            messagebox.showwarning("警告", "エクスポートするテスト結果がありません")
+            return
+        
+        try:
+            # 出力ディレクトリを選択
+            output_dir = filedialog.askdirectory(
+                title="ビジュアライズ結果の保存先を選択",
+                initialdir=os.getcwd()
+            )
+            
+            if output_dir:
+                # ビジュアライザーを新しいディレクトリで初期化
+                visualizer = LPDDRVisualizer(output_dir)
+                
+                # アイパターン結果を取得
+                eye_pattern_results = {}
+                if hasattr(self.automation, 'eye_pattern_results'):
+                    eye_pattern_results = self.automation.eye_pattern_results
+                
+                # すべてのビジュアライゼーションをエクスポート
+                exported_files = visualizer.export_all_visualizations(
+                    self.automation.test_results,
+                    eye_pattern_results
+                )
+                
+                # 結果を表示
+                file_list = "\n".join([f"• {os.path.basename(path)}" for path in exported_files.values()])
+                messagebox.showinfo(
+                    "エクスポート完了", 
+                    f"以下のファイルをエクスポートしました:\n\n{file_list}\n\n保存先: {output_dir}"
+                )
+                
+                self.log_message(f"ビジュアライズ結果をエクスポートしました: {output_dir}", "SUCCESS")
+                
+        except Exception as e:
+            self.log_message(f"ビジュアライズエクスポートに失敗しました: {e}", "ERROR")
+            messagebox.showerror("エラー", f"ビジュアライズエクスポートに失敗しました: {e}")
                 
     def check_log_queue(self):
         """ログキューをチェック"""

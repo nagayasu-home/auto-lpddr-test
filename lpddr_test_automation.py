@@ -24,6 +24,7 @@ from exceptions import (
     TestExecutionError, TimeoutError, CommandError, TestResultError
 )
 from validators import ConfigValidator
+from visualization import LPDDRVisualizer
 
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -101,6 +102,7 @@ class LPDDRAutomation:
         self.test_results: List[TestResult] = []
         self.current_step = TestStep.FREQUENCY_SELECT
         self.eye_pattern_results: Dict[str, str] = {}
+        self.visualizer = LPDDRVisualizer()
         
     def connect(self) -> bool:
         """シリアル接続を確立"""
@@ -593,6 +595,17 @@ class LPDDRAutomation:
             logger.info(f"OVERALL RESULT: {JudgmentMessages.MEMORY_NOT_FUNCTIONAL.value}")
             if eye_tests:
                 logger.info("Eye pattern analysis completed - signal quality issues detected")
+        
+        # ビジュアライゼーションを生成
+        try:
+            logger.info("Generating visualizations...")
+            exported_files = self.visualizer.export_all_visualizations(
+                self.test_results, 
+                self.eye_pattern_results
+            )
+            logger.info(f"Visualizations exported: {list(exported_files.keys())}")
+        except Exception as e:
+            logger.warning(f"Failed to generate visualizations: {e}")
 
 def main():
     """メイン関数"""

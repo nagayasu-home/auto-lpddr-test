@@ -24,6 +24,9 @@ GUI インターフェースを提供するモジュール
 ### 6. logger_config.py
 ログ設定と構造化ログ機能
 
+### 7. visualization.py
+ビジュアライゼーション機能
+
 ## 主要クラス
 
 ### TestConfig
@@ -510,6 +513,94 @@ test_logger.log_test_result(frequency=800, pattern=1, result="PASS")
 test_logger.log_connection(port="/dev/ttyUSB0", baudrate=115200, success=True)
 ```
 
+## ビジュアライゼーション機能
+
+### LPDDRVisualizer
+
+テスト結果のビジュアライゼーション機能を提供するクラス
+
+#### コンストラクタ
+
+```python
+def __init__(self, output_dir: str = "visualization_output"):
+    """
+    ビジュアライザーを初期化
+    
+    Args:
+        output_dir (str): 出力ディレクトリ
+    """
+```
+
+#### 主要メソッド
+
+##### visualize_eye_pattern_results(eye_pattern_results, save_plot=True, show_plot=False) -> str
+```python
+def visualize_eye_pattern_results(self, eye_pattern_results: Dict[str, str], 
+                                save_plot: bool = True, show_plot: bool = False) -> str:
+    """
+    アイパターン結果をヒートマップで可視化
+    
+    Args:
+        eye_pattern_results (Dict[str, str]): アイパターン結果辞書
+        save_plot (bool): プロットを保存するか
+        show_plot (bool): プロットを表示するか
+        
+    Returns:
+        str: 保存されたファイルパス
+    """
+```
+
+##### visualize_test_timeline(test_results, save_plot=True, show_plot=False) -> str
+```python
+def visualize_test_timeline(self, test_results: List[TestResult], 
+                          save_plot: bool = True, show_plot: bool = False) -> str:
+    """
+    テスト実行タイムラインを可視化
+    
+    Args:
+        test_results (List[TestResult]): テスト結果リスト
+        save_plot (bool): プロットを保存するか
+        show_plot (bool): プロットを表示するか
+        
+    Returns:
+        str: 保存されたファイルパス
+    """
+```
+
+##### create_interactive_dashboard(test_results, eye_pattern_results, save_html=True) -> str
+```python
+def create_interactive_dashboard(self, test_results: List[TestResult], 
+                               eye_pattern_results: Dict[str, str],
+                               save_html: bool = True) -> str:
+    """
+    インタラクティブなダッシュボードを作成
+    
+    Args:
+        test_results (List[TestResult]): テスト結果リスト
+        eye_pattern_results (Dict[str, str]): アイパターン結果辞書
+        save_html (bool): HTMLファイルを保存するか
+        
+    Returns:
+        str: 保存されたファイルパス
+    """
+```
+
+##### export_all_visualizations(test_results, eye_pattern_results) -> Dict[str, str]
+```python
+def export_all_visualizations(self, test_results: List[TestResult], 
+                            eye_pattern_results: Dict[str, str]) -> Dict[str, str]:
+    """
+    すべてのビジュアライゼーションをエクスポート
+    
+    Args:
+        test_results (List[TestResult]): テスト結果リスト
+        eye_pattern_results (Dict[str, str]): アイパターン結果辞書
+        
+    Returns:
+        Dict[str, str]: エクスポートされたファイルのパス辞書
+    """
+```
+
 ## 注意事項
 
 1. **シリアルポートの権限**: Linux環境では、シリアルポートへのアクセス権限が必要です
@@ -517,6 +608,7 @@ test_logger.log_connection(port="/dev/ttyUSB0", baudrate=115200, success=True)
 3. **エラーハンドリング**: 適切な例外処理を実装してください
 4. **リソース管理**: テスト完了後は必ず接続を切断してください
 5. **設定の検証**: テスト実行前に設定値の妥当性を確認してください
+6. **ビジュアライゼーション依存関係**: matplotlib, seaborn, plotly等のライブラリが必要です
 
 ## トラブルシューティング
 
