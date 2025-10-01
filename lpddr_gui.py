@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-LPDDR Test Automation GUI
+LPDDR Test Automation GUI with Integrated Terminal
+統合ターミナル機能付きLPDDRテスト自動化GUI
 """
 
 import tkinter as tk
@@ -9,7 +10,8 @@ import threading
 import queue
 import yaml
 import os
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 
 from lpddr_test_automation import LPDDRAutomation, TestConfig
 from constants import (
@@ -19,14 +21,30 @@ from constants import (
 from validators import ConfigValidator, StringValidator
 from exceptions import ValidationError, ConfigurationError
 from logger_config import get_test_logger
-from visualization import LPDDRVisualizer
+
+# オプショナルインポート
+try:
+    from visualization import LPDDRVisualizer
+    VISUALIZATION_AVAILABLE = True
+except ImportError:
+    VISUALIZATION_AVAILABLE = False
+
+try:
+    from terminal_widget import TerminalWidget, TerminalWindow
+    TERMINAL_AVAILABLE = True
+except ImportError:
+    TERMINAL_AVAILABLE = False
+
 
 class LPDDRTestGUI:
+    """LPDDRテスト自動化GUI（統合ターミナル機能付き）"""
+    
     def __init__(self, root):
         self.root = root
         self.root.title("LPDDR Test Automation")
         self.root.geometry(f"{GUIElements.WINDOW_WIDTH.value}x{GUIElements.WINDOW_HEIGHT.value}")
         
+        # 基本変数
         self.automation = None
         self.test_thread = None
         self.log_queue = queue.Queue()
@@ -34,7 +52,18 @@ class LPDDRTestGUI:
         self.is_test_running = False
         self.test_progress = 0
         self.total_steps = 0
-        self.visualizer = LPDDRVisualizer()
+        
+        # オプショナル機能
+        self.visualizer = LPDDRVisualizer() if VISUALIZATION_AVAILABLE else None
+        self.terminal_window = None
+        
+        # UI変数
+        self.port_var = tk.StringVar(value="/dev/ttyUSB0")
+        self.baudrate_var = tk.StringVar(value="115200")
+        self.freq_var = tk.StringVar(value="800,666")
+        self.pattern_var = tk.StringVar(value="1,15")
+        self.progress_var = tk.DoubleVar()
+        self.status_var = tk.StringVar(value="待機中")
         
         self.setup_ui()
         self.load_default_config()
@@ -51,13 +80,11 @@ class LPDDRTestGUI:
         
         # シリアルポート設定
         ttk.Label(config_frame, text="シリアルポート:").grid(row=0, column=0, sticky=tk.W)
-        self.port_var = tk.StringVar(value="/dev/ttyUSB0")
         port_combo = ttk.Combobox(config_frame, textvariable=self.port_var, width=15)
         port_combo['values'] = ("/dev/ttyUSB0", "/dev/ttyUSB1", "COM3", "COM4")
         port_combo.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
         
         ttk.Label(config_frame, text="ボーレート:").grid(row=0, column=2, sticky=tk.W, padx=(20, 0))
-        self.baudrate_var = tk.StringVar(value="115200")
         baudrate_combo = ttk.Combobox(config_frame, textvariable=self.baudrate_var, width=10)
         baudrate_combo['values'] = ("9600", "19200", "38400", "57600", "115200")
         baudrate_combo.grid(row=0, column=3, sticky=(tk.W, tk.E), padx=(5, 0))
@@ -68,13 +95,11 @@ class LPDDRTestGUI:
         
         # 周波数選択
         ttk.Label(test_frame, text="テスト周波数:").grid(row=0, column=0, sticky=tk.W)
-        self.freq_var = tk.StringVar(value="800,666")
         freq_entry = ttk.Entry(test_frame, textvariable=self.freq_var, width=20)
         freq_entry.grid(row=0, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
         
         # テストパターン選択
         ttk.Label(test_frame, text="テストパターン:").grid(row=1, column=0, sticky=tk.W)
-        self.pattern_var = tk.StringVar(value="1,15")
         pattern_entry = ttk.Entry(test_frame, textvariable=self.pattern_var, width=20)
         pattern_entry.grid(row=1, column=1, sticky=(tk.W, tk.E), padx=(5, 0))
         
@@ -82,32 +107,37 @@ class LPDDRTestGUI:
         control_frame = ttk.Frame(main_frame)
         control_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
+        # テスト制御ボタン
         self.start_button = ttk.Button(control_frame, text="テスト開始", command=self.start_test)
         self.start_button.grid(row=0, column=0, padx=(0, 5))
         
         self.stop_button = ttk.Button(control_frame, text="テスト停止", command=self.stop_test, state=tk.DISABLED)
         self.stop_button.grid(row=0, column=1, padx=(0, 5))
         
+        # 設定ボタン
         ttk.Button(control_frame, text="設定保存", command=self.save_config).grid(row=0, column=2, padx=(0, 5))
         ttk.Button(control_frame, text="設定読み込み", command=self.load_config).grid(row=0, column=3, padx=(0, 5))
         
-        # ビジュアライズボタン
-        ttk.Button(control_frame, text="結果可視化", command=self.show_visualizations).grid(row=0, column=6, padx=(0, 5))
+        # ターミナルボタン（利用可能な場合のみ）
+        if TERMINAL_AVAILABLE:
+            ttk.Button(control_frame, text="ターミナル", command=self.open_terminal).grid(row=0, column=4, padx=(0, 5))
+        
+        # ビジュアライズボタン（利用可能な場合のみ）
+        if VISUALIZATION_AVAILABLE:
+            ttk.Button(control_frame, text="結果可視化", command=self.show_visualizations).grid(row=0, column=5, padx=(0, 5))
         
         # プログレスバー
-        self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(
             control_frame, 
             variable=self.progress_var, 
             maximum=GUIElements.PROGRESS_MAX.value,
             length=200
         )
-        self.progress_bar.grid(row=0, column=4, padx=(10, 0))
+        self.progress_bar.grid(row=0, column=6, padx=(10, 0))
         
         # ステータスラベル
-        self.status_var = tk.StringVar(value="待機中")
         self.status_label = ttk.Label(control_frame, textvariable=self.status_var)
-        self.status_label.grid(row=0, column=5, padx=(10, 0))
+        self.status_label.grid(row=0, column=7, padx=(10, 0))
         
         # ログ表示フレーム
         log_frame = ttk.LabelFrame(main_frame, text="テストログ", padding="5")
@@ -137,9 +167,6 @@ class LPDDRTestGUI:
         # 結果エクスポートボタン
         ttk.Button(result_frame, text="結果エクスポート", command=self.export_results).grid(row=1, column=0, pady=(5, 0))
         
-        # ビジュアライズエクスポートボタン
-        ttk.Button(result_frame, text="可視化エクスポート", command=self.export_visualizations).grid(row=1, column=1, pady=(5, 0), padx=(5, 0))
-        
         # グリッドの重み設定
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -151,15 +178,14 @@ class LPDDRTestGUI:
         
     def log_message(self, message: str, level: str = "INFO"):
         """ログメッセージを表示"""
-        import datetime
-        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now().strftime("%H:%M:%S")
         formatted_message = f"[{timestamp}] [{level}] {message}"
         
         self.log_text.insert(tk.END, f"{formatted_message}\n")
         self.log_text.see(tk.END)
         self.root.update_idletasks()
         
-        # ログレベルに応じて色分け（簡易版）
+        # ログレベルに応じて色分け
         if level == "ERROR":
             self.log_text.tag_add("error", f"end-2l", "end-1l")
             self.log_text.tag_config("error", foreground="red")
@@ -219,7 +245,7 @@ class LPDDRTestGUI:
         except Exception as e:
             messagebox.showerror("設定エラー", f"予期しないエラー: {e}")
             return False
-        
+    
     def start_test(self):
         """テストを開始"""
         if self.is_test_running:
@@ -266,7 +292,7 @@ class LPDDRTestGUI:
             self.log_message(f"テスト開始に失敗しました: {e}", "ERROR")
             messagebox.showerror("エラー", f"テスト開始に失敗しました: {e}")
             self.is_test_running = False
-            
+    
     def run_test_thread(self, config, frequencies, patterns):
         """テスト実行スレッド"""
         try:
@@ -326,7 +352,7 @@ class LPDDRTestGUI:
             self.is_test_running = False
             self.log_queue.put(("テストが完了しました", "SUCCESS"))
             self.update_progress(self.total_steps, self.total_steps, "完了")
-            
+    
     def stop_test(self):
         """テストを停止"""
         if not self.is_test_running:
@@ -341,7 +367,7 @@ class LPDDRTestGUI:
         self.stop_button.config(state=tk.DISABLED)
         self.status_var.set("停止")
         self.log_message("テストが停止されました", "WARNING")
-        
+    
     def generate_report(self):
         """レポートを生成"""
         if not self.automation or not self.automation.test_results:
@@ -365,13 +391,13 @@ class LPDDRTestGUI:
         if any(r.result.value == "PASS" for r in memory_tests):
             report += "結果: メモリは正常に動作しています\n"
         elif any(r.result.value == "PASS" for r in diag_tests):
-            report += "結果: メモリは動作している可能性がありますが不安定です\n"
+            report += "結果: メモリは動作しているが不安定な可能性があります\n"
         else:
             report += "結果: メモリが動作していません\n"
             
         self.result_text.delete(1.0, tk.END)
         self.result_text.insert(1.0, report)
-        
+    
     def save_config(self):
         """設定を保存"""
         # 設定の検証
@@ -406,7 +432,7 @@ class LPDDRTestGUI:
         except Exception as e:
             self.log_message(f"設定保存に失敗しました: {e}", "ERROR")
             messagebox.showerror("エラー", f"設定保存に失敗しました: {e}")
-            
+    
     def load_config(self):
         """設定を読み込み"""
         filename = filedialog.askopenfilename(
@@ -492,74 +518,299 @@ class LPDDRTestGUI:
                 messagebox.showerror("エラー", f"結果エクスポートに失敗しました: {e}")
     
     def show_visualizations(self):
-        """ビジュアライズ結果を表示"""
+        """結果可視化を表示"""
+        if not VISUALIZATION_AVAILABLE:
+            messagebox.showwarning("警告", "可視化機能が利用できません")
+            return
+        
         if not self.automation or not self.automation.test_results:
-            messagebox.showwarning("警告", "表示するテスト結果がありません")
+            messagebox.showwarning("警告", "可視化する結果がありません")
             return
         
         try:
-            # アイパターン結果がある場合は表示
-            if hasattr(self.automation, 'eye_pattern_results') and self.automation.eye_pattern_results:
-                self.visualizer.visualize_eye_pattern_results(
-                    self.automation.eye_pattern_results, 
-                    save_plot=True, 
-                    show_plot=True
-                )
-            
-            # タイムライン表示
-            self.visualizer.visualize_test_timeline(
-                self.automation.test_results,
-                save_plot=True,
-                show_plot=True
-            )
-            
-            self.log_message("ビジュアライズ結果を表示しました", "SUCCESS")
-            
+            self.visualizer.plot_test_results(self.automation.test_results)
+            self.log_message("結果可視化を表示しました", "SUCCESS")
         except Exception as e:
-            self.log_message(f"ビジュアライズ表示に失敗しました: {e}", "ERROR")
-            messagebox.showerror("エラー", f"ビジュアライズ表示に失敗しました: {e}")
+            self.log_message(f"可視化表示に失敗しました: {e}", "ERROR")
+            messagebox.showerror("エラー", f"可視化表示に失敗しました: {e}")
     
-    def export_visualizations(self):
-        """ビジュアライズ結果をエクスポート"""
-        if not self.automation or not self.automation.test_results:
-            messagebox.showwarning("警告", "エクスポートするテスト結果がありません")
+    def open_terminal(self):
+        """ターミナルウィンドウを開く"""
+        if not TERMINAL_AVAILABLE:
+            messagebox.showwarning("警告", "ターミナル機能が利用できません")
             return
         
-        try:
-            # 出力ディレクトリを選択
-            output_dir = filedialog.askdirectory(
-                title="ビジュアライズ結果の保存先を選択",
-                initialdir=os.getcwd()
-            )
+        if not self.terminal_window or not self.terminal_window.is_open():
+            self.terminal_window = TerminalWindow(self.root, self.handle_terminal_command)
+            self.terminal_window.show()
+        else:
+            self.terminal_window.focus()
+    
+    def handle_terminal_command(self, command: str) -> str:
+        """ターミナルコマンドを処理"""
+        parts = command.strip().split()
+        if not parts:
+            return ""
             
-            if output_dir:
-                # ビジュアライザーを新しいディレクトリで初期化
-                visualizer = LPDDRVisualizer(output_dir)
-                
-                # アイパターン結果を取得
-                eye_pattern_results = {}
-                if hasattr(self.automation, 'eye_pattern_results'):
-                    eye_pattern_results = self.automation.eye_pattern_results
-                
-                # すべてのビジュアライゼーションをエクスポート
-                exported_files = visualizer.export_all_visualizations(
-                    self.automation.test_results,
-                    eye_pattern_results
-                )
-                
-                # 結果を表示
-                file_list = "\n".join([f"• {os.path.basename(path)}" for path in exported_files.values()])
-                messagebox.showinfo(
-                    "エクスポート完了", 
-                    f"以下のファイルをエクスポートしました:\n\n{file_list}\n\n保存先: {output_dir}"
-                )
-                
-                self.log_message(f"ビジュアライズ結果をエクスポートしました: {output_dir}", "SUCCESS")
+        cmd = parts[0].lower()
+        args = parts[1:]
+        
+        try:
+            if cmd == "help":
+                return self.get_terminal_help()
+            elif cmd == "config":
+                return self.handle_terminal_config(args)
+            elif cmd == "connect":
+                return self.handle_terminal_connect()
+            elif cmd == "disconnect":
+                return self.handle_terminal_disconnect()
+            elif cmd == "test":
+                return self.handle_terminal_test(args)
+            elif cmd == "stop":
+                return self.handle_terminal_stop()
+            elif cmd == "status":
+                return self.get_terminal_status()
+            elif cmd == "log":
+                return self.get_terminal_logs(args)
+            elif cmd == "clear":
+                return "Terminal cleared"
+            else:
+                return f"Unknown command: {cmd}. Type 'help' for available commands."
                 
         except Exception as e:
-            self.log_message(f"ビジュアライズエクスポートに失敗しました: {e}", "ERROR")
-            messagebox.showerror("エラー", f"ビジュアライズエクスポートに失敗しました: {e}")
+            return f"Error: {e}"
+    
+    def get_terminal_help(self) -> str:
+        """ターミナルヘルプを取得"""
+        return """
+LPDDR Test Automation Commands:
+
+CONFIGURATION:
+  config show                    - Show current configuration
+  config port <port>             - Set serial port
+  config baudrate <rate>         - Set baudrate
+  config timeout <seconds>       - Set timeout
+  config frequencies <freqs>     - Set test frequencies
+  config patterns <patterns>     - Set test patterns
+
+CONNECTION:
+  connect                        - Connect to target board
+  disconnect                     - Disconnect from target board
+
+TESTING:
+  test                           - Run full test sequence
+  test freq <frequency>          - Run single frequency test
+  test diag                      - Run diagnostics test only
+  stop                           - Stop current test
+
+INFORMATION:
+  status                         - Show current status
+  log [lines]                    - Show recent logs
+  help                           - Show this help
+
+Note: Commands are executed in the main GUI context.
+        """
+    
+    def handle_terminal_config(self, args: List[str]) -> str:
+        """ターミナル設定コマンドを処理"""
+        if not args:
+            return self.get_terminal_status()
+            
+        try:
+            if args[0] == "show":
+                return self.get_terminal_status()
+            elif args[0] == "port" and len(args) > 1:
+                self.port_var.set(args[1])
+                return f"Port set to: {args[1]}"
+            elif args[0] == "baudrate" and len(args) > 1:
+                baudrate = int(args[1])
+                ConfigValidator.validate_baudrate(baudrate)
+                self.baudrate_var.set(str(baudrate))
+                return f"Baudrate set to: {baudrate}"
+            elif args[0] == "frequencies" and len(args) > 1:
+                frequencies = [int(f.strip()) for f in args[1].split(',')]
+                ConfigValidator.validate_frequencies(frequencies)
+                self.freq_var.set(args[1])
+                return f"Frequencies set to: {frequencies}"
+            elif args[0] == "patterns" and len(args) > 1:
+                patterns = [int(p.strip()) for p in args[1].split(',')]
+                ConfigValidator.validate_patterns(patterns)
+                self.pattern_var.set(args[1])
+                return f"Patterns set to: {patterns}"
+            else:
+                return f"Unknown config command: {args[0]}"
                 
+        except (ValueError, ValidationError) as e:
+            return f"Configuration error: {e}"
+    
+    def handle_terminal_connect(self) -> str:
+        """ターミナル接続コマンドを処理"""
+        if not self.validate_settings():
+            return "Configuration error. Please check settings."
+            
+        try:
+            config = TestConfig(
+                port=self.port_var.get(),
+                baudrate=int(self.baudrate_var.get()),
+                timeout=30.0
+            )
+            
+            self.automation = LPDDRAutomation(config)
+            
+            if self.automation.connect():
+                return f"✓ Connected to {config.port} at {config.baudrate} baud"
+            else:
+                return f"✗ Failed to connect to {config.port}"
+                
+        except Exception as e:
+            return f"Connection error: {e}"
+    
+    def handle_terminal_disconnect(self) -> str:
+        """ターミナル切断コマンドを処理"""
+        if self.automation:
+            self.automation.disconnect()
+            return "Disconnected from target board"
+        else:
+            return "Not connected"
+    
+    def handle_terminal_test(self, args: List[str]) -> str:
+        """ターミナルテストコマンドを処理"""
+        if not self.automation or not self.automation.serial_conn or not self.automation.serial_conn.is_open:
+            return "Error: Not connected to target board. Use 'connect' command first."
+            
+        if self.is_test_running:
+            return "Error: Test is already running. Use 'stop' command to stop current test."
+            
+        if not args:
+            # フルテストシーケンスを開始
+            self.start_test()
+            return "Full test sequence started. Check main GUI for progress."
+        elif args[0] == "freq" and len(args) > 1:
+            try:
+                frequency = int(args[1])
+                # 単一周波数テストを開始
+                self.start_single_frequency_test(frequency)
+                return f"Single frequency test started: {frequency}MHz"
+            except ValueError:
+                return "Error: Invalid frequency value"
+        elif args[0] == "diag":
+            # 診断テストを開始
+            self.start_diagnostics_test()
+            return "Diagnostics test started"
+        else:
+            return f"Unknown test command: {args[0]}"
+    
+    def handle_terminal_stop(self) -> str:
+        """ターミナル停止コマンドを処理"""
+        if self.is_test_running:
+            self.stop_test()
+            return "Test stopped"
+        else:
+            return "No test is currently running"
+    
+    def get_terminal_status(self) -> str:
+        """ターミナルステータスを取得"""
+        status = []
+        status.append("LPDDR Test Automation Status")
+        status.append("=" * 40)
+        
+        # 接続ステータス
+        if self.automation and self.automation.serial_conn and self.automation.serial_conn.is_open:
+            status.append(f"Connection: ✓ Connected to {self.port_var.get()}")
+        else:
+            status.append("Connection: ✗ Disconnected")
+        
+        # テストステータス
+        if self.is_test_running:
+            status.append("Test Status: 🔄 Running")
+        else:
+            status.append("Test Status: ⏸ Ready")
+        
+        # 設定情報
+        status.append(f"Port: {self.port_var.get()}")
+        status.append(f"Baudrate: {self.baudrate_var.get()}")
+        status.append(f"Frequencies: {self.freq_var.get()}")
+        status.append(f"Patterns: {self.pattern_var.get()}")
+        
+        return "\n".join(status)
+    
+    def get_terminal_logs(self, args: List[str]) -> str:
+        """ターミナルログを取得"""
+        lines = 20
+        if args and args[0].isdigit():
+            lines = int(args[0])
+            
+        log_file = "logs/lpddr_test.log"
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    all_lines = f.readlines()
+                    recent_lines = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                    return "".join(recent_lines)
+            except Exception as e:
+                return f"Error reading log file: {e}"
+        else:
+            return "No log file found"
+    
+    def start_single_frequency_test(self, frequency: int):
+        """単一周波数テストを開始"""
+        if not self.validate_settings():
+            return
+            
+        try:
+            config = TestConfig(
+                port=self.port_var.get(),
+                baudrate=int(self.baudrate_var.get()),
+                timeout=30.0
+            )
+            
+            frequencies = [frequency]
+            patterns = [int(p.strip()) for p in self.pattern_var.get().split(',')]
+            
+            self.total_steps = len(patterns)
+            self.test_progress = 0
+            self.is_test_running = True
+            
+            self.test_thread = threading.Thread(
+                target=self.run_test_thread,
+                args=(config, frequencies, patterns)
+            )
+            self.test_thread.daemon = True
+            self.test_thread.start()
+            
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL)
+            self.status_var.set("Single frequency test running...")
+            
+        except Exception as e:
+            self.log_message(f"Single frequency test start failed: {e}", "ERROR")
+    
+    def start_diagnostics_test(self):
+        """診断テストを開始"""
+        if not self.automation or not self.automation.serial_conn or not self.automation.serial_conn.is_open:
+            self.log_message("Not connected to target board", "ERROR")
+            return
+            
+        self.is_test_running = True
+        self.status_var.set("Diagnostics test running...")
+        
+        def diag_thread():
+            try:
+                self.log_queue.put(("診断テストを開始します", "INFO"))
+                diag_result = self.automation.run_diagnostics_test()
+                status = "SUCCESS" if diag_result.result.value == "PASS" else "ERROR"
+                self.log_queue.put((f"診断テスト結果: {diag_result.result.value}", status))
+                
+            except Exception as e:
+                self.log_queue.put((f"診断テストでエラー: {e}", "ERROR"))
+            finally:
+                self.is_test_running = False
+                self.log_queue.put(("診断テストが完了しました", "SUCCESS"))
+                self.update_progress(1, 1, "完了")
+        
+        self.test_thread = threading.Thread(target=diag_thread, daemon=True)
+        self.test_thread.start()
+    
     def check_log_queue(self):
         """ログキューをチェック"""
         try:
@@ -577,11 +828,14 @@ class LPDDRTestGUI:
         # 定期的に再チェック
         self.root.after(GUIElements.QUEUE_CHECK_INTERVAL.value, self.check_log_queue)
 
+
 def main():
+    """メイン関数"""
     root = tk.Tk()
     app = LPDDRTestGUI(root)
     app.check_log_queue()  # ログキュー監視を開始
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()

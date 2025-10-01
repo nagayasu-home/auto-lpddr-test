@@ -24,7 +24,11 @@ from exceptions import (
     TestExecutionError, TimeoutError, CommandError, TestResultError
 )
 from validators import ConfigValidator
-from visualization import LPDDRVisualizer
+try:
+    from visualization import LPDDRVisualizer
+    VISUALIZATION_AVAILABLE = True
+except ImportError:
+    VISUALIZATION_AVAILABLE = False
 
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

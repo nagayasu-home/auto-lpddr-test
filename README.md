@@ -38,6 +38,19 @@ python lpddr_test_automation.py
 python lpddr_gui.py
 ```
 
+### ターミナル版（推奨）
+
+```bash
+python lpddr_terminal.py
+```
+
+**ターミナル版の利点:**
+- リソース競合の回避（シリアルポートの排他制御）
+- 軽量で高速な起動
+- 自動化スクリプトとの統合が容易
+- リモート環境での実行が可能
+- サーバー環境での運用に適している
+
 ## 設定
 
 `config.yaml` ファイルで設定を変更できます：
@@ -60,10 +73,13 @@ python lpddr_gui.py
 
 - `lpddr_test_automation.py` - メインの自動化スクリプト
 - `lpddr_gui.py` - GUI インターフェース
+- `lpddr_terminal.py` - ターミナル インターフェース（推奨）
 - `visualization.py` - ビジュアライゼーション機能
 - `config.yaml` - 設定ファイル
 - `requirements.txt` - 依存関係
 - `README.md` - このファイル
+- `TERMINAL_GUIDE.md` - ターミナル版の詳細ガイド
+- `API_DOCUMENTATION.md` - API仕様書
 
 ## 実装した機能：
 
