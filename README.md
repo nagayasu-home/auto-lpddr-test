@@ -12,36 +12,233 @@ AI-CAMKITメインボードのLPDDR4インタフェース検証を自動化す�
 
 ## インストール
 
-```bash
+### 前提条件
+
+- Python 3.8以上
+- Windows 10/11 または Linux
+- シリアルポート（COMポート）へのアクセス権限
+
+### Windows環境でのセットアップ
+
+#### 1. Pythonのインストール確認
+```cmd
+python --version
+# または
+python3 --version
+```
+
+#### 2. 仮想環境の作成と有効化
+```cmd
+# プロジェクトディレクトリに移動
+cd C:\path\to\auto-lpddr-test
+
+# 仮想環境を作成
+python -m venv venv
+
+# 仮想環境を有効化
+venv\Scripts\activate
+
+# 仮想環境が有効化されていることを確認（プロンプトに(venv)が表示される）
+(venv) C:\path\to\auto-lpddr-test>
+```
+
+#### 3. 依存関係のインストール
+```cmd
+# pipを最新版にアップグレード
+python -m pip install --upgrade pip
+
 # 依存関係をインストール
 pip install -r requirements.txt
+```
 
-# 仮想環境を使用する場合
+#### 4. シリアルポートの設定
+```cmd
+# デバイスマネージャーでCOMポート番号を確認
+# 通常はCOM3, COM7など
+
+# config.yamlでポート番号を設定
+# serial:
+#   port: "COM7"  # 実際のポート番号に変更
+```
+
+### Linux環境でのセットアップ
+
+#### 1. 仮想環境の作成と有効化
+```bash
+# プロジェクトディレクトリに移動
+cd /path/to/auto-lpddr-test
+
+# 仮想環境を作成
 python3 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# または
-venv\Scripts\activate     # Windows
+
+# 仮想環境を有効化
+source venv/bin/activate
+
+# 仮想環境が有効化されていることを確認
+(venv) user@host:~/auto-lpddr-test$
+```
+
+#### 2. 依存関係のインストール
+```bash
+# pipを最新版にアップグレード
+python -m pip install --upgrade pip
+
+# 依存関係をインストール
 pip install -r requirements.txt
+```
+
+#### 3. シリアルポートの権限設定
+```bash
+# ユーザーをdialoutグループに追加
+sudo usermod -a -G dialout $USER
+
+# 変更を反映するためにログアウト・ログインするか、以下を実行
+newgrp dialout
+
+# シリアルポートの権限を確認
+ls -l /dev/ttyUSB* /dev/ttyACM*
+```
+
+### 仮想環境の管理
+
+#### 仮想環境の有効化
+```cmd
+# Windows
+venv\Scripts\activate
+
+# Linux/Mac
+source venv/bin/activate
+```
+
+#### 仮想環境の無効化
+```cmd
+# Windows/Linux/Mac共通
+deactivate
+```
+
+#### 仮想環境の削除
+```cmd
+# Windows
+rmdir /s venv
+
+# Linux/Mac
+rm -rf venv
+```
+
+### トラブルシューティング
+
+#### Windows環境でのよくある問題
+
+**Q: 'python' コマンドが見つからない**
+```cmd
+# Pythonがインストールされているか確認
+where python
+# または
+where python3
+
+# PATHに追加されていない場合は、フルパスで実行
+C:\Python39\python.exe -m venv venv
+```
+
+**Q: 仮想環境の有効化でエラーが発生する**
+```cmd
+# 実行ポリシーの問題の場合
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+# または、PowerShellではなくコマンドプロンプトを使用
+cmd
+venv\Scripts\activate.bat
+```
+
+**Q: シリアルポートにアクセスできない**
+```cmd
+# デバイスマネージャーでCOMポートを確認
+# 他のアプリケーション（TeraTerm等）がポートを使用していないか確認
+# 管理者権限で実行してみる
+```
+
+#### Linux環境でのよくある問題
+
+**Q: シリアルポートの権限エラー**
+```bash
+# 権限を確認
+ls -l /dev/ttyUSB0
+
+# 一時的に権限を変更（推奨しない）
+sudo chmod 666 /dev/ttyUSB0
+
+# 正しい方法：ユーザーをdialoutグループに追加
+sudo usermod -a -G dialout $USER
+```
+
+**Q: 仮想環境でpipが見つからない**
+```bash
+# 仮想環境を再作成
+rm -rf venv
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install --upgrade pip
 ```
 
 ## 使用方法
 
+### 仮想環境の有効化
+
+実行前に必ず仮想環境を有効化してください：
+
+```cmd
+# Windows
+venv\Scripts\activate
+
+# Linux/Mac
+source venv/bin/activate
+```
+
 ### コマンドライン版
 
-```bash
+```cmd
+# Windows
 python lpddr_test_automation.py
+
+# Linux/Mac
+python3 lpddr_test_automation.py
 ```
 
 ### GUI版
 
-```bash
+```cmd
+# Windows
 python lpddr_gui.py
+
+# Linux/Mac
+python3 lpddr_gui.py
 ```
 
 ### ターミナル版（推奨）
 
-```bash
+```cmd
+# Windows
 python lpddr_terminal.py
+
+# Linux/Mac
+python3 lpddr_terminal.py
+```
+
+### Windows環境での実行例
+
+```cmd
+# 1. 仮想環境を有効化
+C:\temp\auto-lpddr-test> venv\Scripts\activate
+
+# 2. 仮想環境が有効化されていることを確認
+(venv) C:\temp\auto-lpddr-test>
+
+# 3. GUI版を実行
+(venv) C:\temp\auto-lpddr-test> python lpddr_gui.py
+
+# 4. 実行後、仮想環境を無効化（オプション）
+(venv) C:\temp\auto-lpddr-test> deactivate
+C:\temp\auto-lpddr-test>
 ```
 
 **ターミナル版の利点:**
@@ -53,12 +250,180 @@ python lpddr_terminal.py
 
 ## 設定
 
-`config.yaml` ファイルで設定を変更できます：
+`config.yaml` ファイルで設定を変更できます。このファイルは、LPDDRテスト自動化ソフトウェアの動作を制御する重要な設定ファイルです。
 
-- シリアルポート設定
-- テスト周波数
-- テストパターン
-- ログレベル
+### 設定ファイルの場所
+- プロジェクトルートディレクトリの `config.yaml`
+- ファイルが存在しない場合は、デフォルト設定が使用されます
+
+### 設定項目の詳細
+
+#### 1. シリアル通信設定 (`serial`)
+```yaml
+serial:
+  port: "COM7"        # シリアルポート（Windows: COM7, Linux: /dev/ttyUSB0）
+  baudrate: 115200    # ボーレート
+  timeout: 30.0       # タイムアウト（秒）
+  parity: "N"         # パリティ（N: なし, E: 偶数, O: 奇数）
+  stopbits: 1         # ストップビット
+  bytesize: 8         # データビット
+```
+
+**設定例：**
+- **Windows**: `port: "COM7"`
+- **Linux**: `port: "/dev/ttyUSB0"`
+
+#### 2. テスト設定 (`test`)
+
+##### 周波数設定
+```yaml
+test:
+  frequencies: [800, 666]  # テストする周波数（MHz）
+```
+
+##### テストパターン設定
+```yaml
+test:
+  patterns:
+    - id: 1
+      name: "test_lpddrA"
+      description: "increment by byte"
+    - id: 15
+      name: "test_lpddr_bitwalk"
+      description: "bit walk test"
+```
+
+**利用可能なパターン：**
+- `1`: test_lpddrA（バイト単位インクリメント）
+- `15`: test_lpddr_bitwalk（ビットウォークテスト）
+
+##### 診断テスト設定
+```yaml
+test:
+  diagnostics:
+    addr_low: "0000"    # 開始アドレス（16進数）
+    addr_high: "03ff"   # 終了アドレス（16進数）
+    loop_count: "00"    # ループ回数
+```
+
+##### テストバイト数
+```yaml
+test:
+  test_bytes: 2147483648  # テストするバイト数（全範囲テスト）
+```
+
+##### 2Dトレーニング設定
+```yaml
+test:
+  enable_2d_training: false  # 2Dトレーニングの有効/無効
+```
+
+##### アイパターンテスト設定
+```yaml
+test:
+  enable_eye_pattern: true   # アイパターンテストの有効/無効
+  eye_pattern:
+    lanes: 4                 # テストするレーン数
+    bits: 8                  # テストするビット数
+    timeout: 30.0            # テストタイムアウト（秒）
+```
+
+#### 3. 電源制御設定 (`power_control`)
+```yaml
+power_control:
+  enabled: false           # 電源制御の有効/無効
+  port: "COM4"            # 電源制御用ポート
+  baudrate: 9600          # 電源制御のボーレート
+  power_off_delay: 2.0    # 電源OFF待機時間（秒）
+  power_on_delay: 3.0     # 電源ON待機時間（秒）
+```
+
+#### 4. ログ設定 (`logging`)
+```yaml
+logging:
+  level: "INFO"                                    # ログレベル
+  file: "lpddr_test.log"                          # ログファイル名
+  format: "%(asctime)s - %(levelname)s - %(message)s"  # ログフォーマット
+```
+
+**ログレベル：**
+- `DEBUG`: 詳細なデバッグ情報
+- `INFO`: 一般的な情報
+- `WARNING`: 警告メッセージ
+- `ERROR`: エラーメッセージ
+
+#### 5. 結果判定設定 (`judgment`)
+```yaml
+judgment:
+  messages:
+    freq_800_pattern_01_pass: "メモリは動作しているが不安定な可能性があります"
+    freq_800_pattern_15_pass: "信号線は接続されているが、メモリアクセスが不安定です"
+    freq_666_pattern_01_pass: "800MHzでは動作しないが666MHzでは動作します"
+    freq_666_pattern_15_pass: "666MHzで信号線接続が確認されました"
+    memory_fail_diag_pass: "メモリは動作しているが不安定な可能性があります"
+    all_fail: "メモリが動作していません"
+  
+  require_diagnostics: false  # 診断テストが必要な条件
+```
+
+### 設定変更の手順
+
+#### 1. シリアルポートの変更
+```yaml
+# Windows環境の場合
+serial:
+  port: "COM7"  # デバイスマネージャーで確認したポート番号に変更
+
+# Linux環境の場合
+serial:
+  port: "/dev/ttyUSB0"  # 実際のデバイスファイルに変更
+```
+
+#### 2. テストパターンの変更
+```yaml
+# 特定のパターンのみテストする場合
+test:
+  patterns:
+    - id: 1
+      name: "test_lpddrA"
+      description: "increment by byte"
+    # パターン15をコメントアウトして無効化
+    # - id: 15
+    #   name: "test_lpddr_bitwalk"
+    #   description: "bit walk test"
+```
+
+#### 3. ログレベルの変更
+```yaml
+# デバッグ情報を表示したい場合
+logging:
+  level: "DEBUG"  # INFOからDEBUGに変更
+```
+
+### 設定ファイルの検証
+
+設定ファイルの構文を確認するには：
+```cmd
+# YAML構文チェック（Pythonで）
+python -c "import yaml; yaml.safe_load(open('config.yaml'))"
+```
+
+### よくある設定ミス
+
+1. **ポート番号の間違い**: デバイスマネージャーで正しいCOMポート番号を確認
+2. **YAML構文エラー**: インデント（スペース）に注意
+3. **存在しないパターンID**: 利用可能なパターンID（1, 15）のみ使用
+4. **権限の問題**: シリアルポートへのアクセス権限を確認
+
+### 設定のリセット
+
+デフォルト設定に戻したい場合：
+```cmd
+# バックアップを作成
+copy config.yaml config.yaml.backup
+
+# デフォルト設定を再生成（アプリケーション起動時に自動生成される）
+```
 
 ## テストフロー
 
@@ -197,10 +562,35 @@ python lpddr_terminal.py
 
 ## 注意事項
 
-- シリアルポートの権限が必要です（Linux: `sudo usermod -a -G dialout $USER`）
+### 共通の注意事項
 - ターゲットボードが正しく接続されていることを確認してください
 - テスト実行中は他のアプリケーションでシリアルポートを使用しないでください
 - ビジュアライゼーション機能には追加のPythonライブラリが必要です（matplotlib, seaborn, plotly等）
+
+### Windows環境での注意事項
+- **シリアルポートの競合**: TeraTermやPuTTYなどの他のシリアル通信ソフトウェアを閉じてから実行してください
+- **管理者権限**: シリアルポートにアクセスできない場合は、管理者権限でコマンドプロンプトを実行してください
+- **COMポート番号**: デバイスマネージャーで正しいCOMポート番号を確認し、`config.yaml`で設定してください
+- **仮想環境**: 必ず仮想環境を有効化してから実行してください
+- **実行ポリシー**: PowerShellで仮想環境の有効化に失敗する場合は、コマンドプロンプトを使用してください
+
+### Linux環境での注意事項
+- **シリアルポートの権限**: ユーザーをdialoutグループに追加してください（`sudo usermod -a -G dialout $USER`）
+- **デバイスファイル**: シリアルデバイスが`/dev/ttyUSB0`や`/dev/ttyACM0`として認識されていることを確認してください
+- **権限確認**: `ls -l /dev/ttyUSB*`で権限を確認してください
+
+### トラブルシューティング
+
+#### 接続エラーの対処法
+1. **ポートが使用中**: 他のアプリケーション（TeraTerm等）を閉じる
+2. **権限エラー**: 管理者権限で実行する（Windows）またはユーザーをdialoutグループに追加（Linux）
+3. **ポート番号が間違っている**: デバイスマネージャー（Windows）または`ls /dev/tty*`（Linux）で確認
+4. **ケーブル接続**: USBケーブルが正しく接続されているか確認
+
+#### 仮想環境の問題
+1. **仮想環境が有効化されない**: コマンドプロンプトを使用（PowerShellではなく）
+2. **パッケージが見つからない**: 仮想環境を有効化してから`pip install -r requirements.txt`を実行
+3. **Pythonコマンドが見つからない**: フルパスで実行するか、PATHを設定
 
 ## ビジュアライゼーション機能の詳細
 

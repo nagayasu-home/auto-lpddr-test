@@ -64,7 +64,7 @@ class TestLimits(Enum):
     """テスト制限定数"""
     # タイムアウト設定
     CONNECTION_TIMEOUT: float = 30.0
-    COMMAND_TIMEOUT: float = 60.0
+    COMMAND_TIMEOUT: float = 120.0  # 2分（test_lpddrAの実行時間に合わせて）
     EYE_PATTERN_TIMEOUT: float = 30.0
     DIAGNOSTICS_TIMEOUT: float = 10.0
     

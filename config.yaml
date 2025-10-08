@@ -2,7 +2,7 @@
 
 # シリアル通信設定
 serial:
-  port: "/dev/ttyUSB0"  # Linux: /dev/ttyUSB0, Windows: COM3
+  port: "COM7"  # Linux: /dev/ttyUSB0, Windows: COM7
   baudrate: 115200
   timeout: 30.0
   parity: "N"
@@ -68,4 +68,4 @@ judgment:
     all_fail: "メモリが動作していません"
   
   # 診断テストが必要な条件
-  require_diagnostics: true
+  require_diagnostics: false

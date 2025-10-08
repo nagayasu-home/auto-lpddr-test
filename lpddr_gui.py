@@ -10,6 +10,7 @@ import threading
 import queue
 import yaml
 import os
+import time
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -52,6 +53,10 @@ class LPDDRTestGUI:
         self.is_test_running = False
         self.test_progress = 0
         self.total_steps = 0
+        self.test_start_time = None
+        self.last_input_time = None
+        self.current_elapsed_time = 0
+        self.elapsed_timer = None
         
         # オプショナル機能
         self.visualizer = LPDDRVisualizer() if VISUALIZATION_AVAILABLE else None
@@ -107,24 +112,28 @@ class LPDDRTestGUI:
         control_frame = ttk.Frame(main_frame)
         control_frame.grid(row=2, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
+        # 接続確認ボタン
+        self.connect_button = ttk.Button(control_frame, text="接続確認", command=self.check_connection)
+        self.connect_button.grid(row=0, column=0, padx=(0, 5))
+        
         # テスト制御ボタン
         self.start_button = ttk.Button(control_frame, text="テスト開始", command=self.start_test)
-        self.start_button.grid(row=0, column=0, padx=(0, 5))
+        self.start_button.grid(row=0, column=1, padx=(0, 5))
         
         self.stop_button = ttk.Button(control_frame, text="テスト停止", command=self.stop_test, state=tk.DISABLED)
-        self.stop_button.grid(row=0, column=1, padx=(0, 5))
+        self.stop_button.grid(row=0, column=2, padx=(0, 5))
         
         # 設定ボタン
-        ttk.Button(control_frame, text="設定保存", command=self.save_config).grid(row=0, column=2, padx=(0, 5))
-        ttk.Button(control_frame, text="設定読み込み", command=self.load_config).grid(row=0, column=3, padx=(0, 5))
+        ttk.Button(control_frame, text="設定保存", command=self.save_config).grid(row=0, column=3, padx=(0, 5))
+        ttk.Button(control_frame, text="設定読み込み", command=self.load_config).grid(row=0, column=4, padx=(0, 5))
         
         # ターミナルボタン（利用可能な場合のみ）
         if TERMINAL_AVAILABLE:
-            ttk.Button(control_frame, text="ターミナル", command=self.open_terminal).grid(row=0, column=4, padx=(0, 5))
+            ttk.Button(control_frame, text="ターミナル", command=self.open_terminal).grid(row=0, column=5, padx=(0, 5))
         
         # ビジュアライズボタン（利用可能な場合のみ）
         if VISUALIZATION_AVAILABLE:
-            ttk.Button(control_frame, text="結果可視化", command=self.show_visualizations).grid(row=0, column=5, padx=(0, 5))
+            ttk.Button(control_frame, text="結果可視化", command=self.show_visualizations).grid(row=0, column=6, padx=(0, 5))
         
         # プログレスバー
         self.progress_bar = ttk.Progressbar(
@@ -133,59 +142,118 @@ class LPDDRTestGUI:
             maximum=GUIElements.PROGRESS_MAX.value,
             length=200
         )
-        self.progress_bar.grid(row=0, column=6, padx=(10, 0))
+        self.progress_bar.grid(row=0, column=7, padx=(10, 0))
         
         # ステータスラベル
         self.status_label = ttk.Label(control_frame, textvariable=self.status_var)
-        self.status_label.grid(row=0, column=7, padx=(10, 0))
+        self.status_label.grid(row=0, column=8, padx=(10, 0))
         
-        # ログ表示フレーム
-        log_frame = ttk.LabelFrame(main_frame, text="テストログ", padding="5")
-        log_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        # 大きなフォントのステータス表示エリア
+        status_display_frame = ttk.LabelFrame(main_frame, text="テスト状況", padding="10")
+        status_display_frame.grid(row=3, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        
+        # 経過時間表示（大きなフォント）
+        self.elapsed_time_label = tk.Label(
+            status_display_frame, 
+            text="経過時間: 0秒", 
+            font=("Arial", 16, "bold"),
+            fg="blue"
+        )
+        self.elapsed_time_label.grid(row=0, column=0, padx=(0, 20))
+        
+        # 現在のテストパターン表示（大きなフォント）
+        self.current_test_label = tk.Label(
+            status_display_frame, 
+            text="テスト状況: 待機中", 
+            font=("Arial", 16, "bold"),
+            fg="green"
+        )
+        self.current_test_label.grid(row=0, column=1)
+        
+        # ログ・結果表示フレーム（左右レイアウト）
+        content_frame = ttk.Frame(main_frame)
+        content_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
+        
+        # ログ表示フレーム（左側）
+        log_frame = ttk.LabelFrame(content_frame, text="テストログ", padding="5")
+        log_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(0, 5))
         
         self.log_text = scrolledtext.ScrolledText(
             log_frame, 
             height=GUIElements.LOG_HEIGHT.value, 
-            width=GUIElements.LOG_WIDTH.value
+            width=GUIElements.LOG_WIDTH.value,
+            maxundo=10000,  # undo履歴を増やす
+            undo=True       # undo機能を有効にする
         )
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
         # ログクリアボタン
         ttk.Button(log_frame, text="ログクリア", command=self.clear_log).grid(row=1, column=0, pady=(5, 0))
         
-        # 結果表示フレーム
-        result_frame = ttk.LabelFrame(main_frame, text="テスト結果", padding="5")
-        result_frame.grid(row=4, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
+        # シリアルログ表示フレーム（右側）
+        result_frame = ttk.LabelFrame(content_frame, text="シリアルログ", padding="5")
+        result_frame.grid(row=0, column=1, sticky=(tk.W, tk.E, tk.N, tk.S), padx=(5, 0))
         
-        self.result_text = tk.Text(
+        self.result_text = scrolledtext.ScrolledText(
             result_frame, 
             height=GUIElements.RESULT_HEIGHT.value, 
-            width=GUIElements.RESULT_WIDTH.value
+            width=GUIElements.RESULT_WIDTH.value,
+            maxundo=10000,  # undo履歴を増やす
+            undo=True       # undo機能を有効にする
         )
-        self.result_text.grid(row=0, column=0, sticky=(tk.W, tk.E))
+        self.result_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # 結果エクスポートボタン
-        ttk.Button(result_frame, text="結果エクスポート", command=self.export_results).grid(row=1, column=0, pady=(5, 0))
+        # シリアルログクリアボタン
+        ttk.Button(result_frame, text="シリアルログクリア", command=self.clear_results).grid(row=1, column=0, pady=(5, 0))
         
         # グリッドの重み設定
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(3, weight=1)
+        main_frame.rowconfigure(4, weight=1)
+        content_frame.columnconfigure(0, weight=1)  # 左側（ログ）
+        content_frame.columnconfigure(1, weight=1)  # 右側（結果）
+        content_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         result_frame.columnconfigure(0, weight=1)
+        result_frame.rowconfigure(0, weight=1)
         
     def log_message(self, message: str, level: str = "INFO"):
         """ログメッセージを表示"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        formatted_message = f"[{timestamp}] [{level}] {message}"
+        # メッセージが既にタイムスタンプ付きの場合はそのまま使用
+        if message.startswith("["):
+            formatted_message = message
+        else:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            formatted_message = f"[{timestamp}] [{level}] {message}"
         
-        self.log_text.insert(tk.END, f"{formatted_message}\n")
-        self.log_text.see(tk.END)
+        # シリアル通信ログは「テスト結果」エリアに表示
+        if level == "SERIAL":
+            self.result_text.insert(tk.END, f"{message}\n")
+            self.result_text.see(tk.END)
+            
+            # シリアルログの行数制限（10000行を超えた場合は古いログを削除）
+            lines = int(self.result_text.index('end-1c').split('.')[0])
+            if lines > 10000:
+                self.result_text.delete('1.0', '1000.0')
+            
+            # 入力要求時（Please Hit number key:で始まる）のタイマー制御
+            if message.startswith("Please Hit number key:"):
+                self.update_input_interval()  # 前回の入力要求からの経過時間を更新
+        else:
+            # その他のログは「テストログ」エリアに表示
+            self.log_text.insert(tk.END, f"{formatted_message}\n")
+            self.log_text.see(tk.END)
+            
+            # テストログの行数制限（5000行を超えた場合は古いログを削除）
+            lines = int(self.log_text.index('end-1c').split('.')[0])
+            if lines > 5000:
+                self.log_text.delete('1.0', '500.0')
+        
         self.root.update_idletasks()
         
-        # ログレベルに応じて色分け
+        # ログレベルに応じて色分け（テストログエリアのみ）
         if level == "ERROR":
             self.log_text.tag_add("error", f"end-2l", "end-1l")
             self.log_text.tag_config("error", foreground="red")
@@ -200,16 +268,107 @@ class LPDDRTestGUI:
         """ログをクリア"""
         self.log_text.delete(1.0, tk.END)
     
+    def clear_results(self):
+        """シリアルログをクリア"""
+        self.result_text.delete(1.0, tk.END)
+    
     def update_progress(self, current: int, total: int, message: str = ""):
         """プログレスバーを更新"""
         if total > 0:
             progress = (current / total) * GUIElements.PROGRESS_MAX.value
             self.progress_var.set(progress)
+            print(f"Progress updated: {current}/{total} = {progress}%")  # デバッグ用
+            
+            # プログレスバーを強制的に更新
+            self.progress_bar.update()
         
         if message:
-            self.status_var.set(message)
+            # 経過時間がある場合は、経過時間を保持してメッセージを更新
+            current_status = self.status_var.get()
+            if "経過時間:" in current_status:
+                # 経過時間部分を抽出
+                parts = current_status.split(" - ", 1)
+                if len(parts) > 1:
+                    elapsed_part = parts[0]
+                    self.status_var.set(f"{elapsed_part} - {message}")
+                else:
+                    self.status_var.set(message)
+            else:
+                self.status_var.set(message)
         
+        # GUIを強制的に更新
         self.root.update_idletasks()
+        self.root.update()
+    
+    def update_elapsed_time(self):
+        """経過時間を更新（前回の入力要求からの経過時間）"""
+        if self.last_input_time and self.is_test_running:
+            elapsed = int(time.time() - self.last_input_time)
+            self.current_elapsed_time = elapsed
+            elapsed_text = f"経過時間: {elapsed}秒"
+            
+            # 大きなフォントの経過時間ラベルを更新
+            self.elapsed_time_label.config(text=elapsed_text)
+            
+            # 現在のステータスから経過時間部分を除去
+            current_status = self.status_var.get()
+            if "経過時間:" in current_status:
+                # 既存の経過時間部分を除去
+                parts = current_status.split(" - ", 1)
+                if len(parts) > 1:
+                    current_status = parts[1]
+                else:
+                    current_status = ""
+            
+            # 新しいステータスを設定（経過時間を先頭に配置）
+            if current_status:
+                self.status_var.set(f"{elapsed_text} - {current_status}")
+            else:
+                self.status_var.set(elapsed_text)
+            
+            # 1秒後に再実行
+            self.elapsed_timer = self.root.after(1000, self.update_elapsed_time)
+    
+    def start_input_timer(self):
+        """入力要求時の経過時間タイマーを開始"""
+        self.last_input_time = time.time()
+        if not self.elapsed_timer:
+            self.update_elapsed_time()
+    
+    def update_input_interval(self):
+        """次の入力要求時の経過時間更新"""
+        if self.last_input_time:
+            # 前回の入力要求からの経過時間を計算
+            interval = int(time.time() - self.last_input_time)
+            self.current_elapsed_time = interval
+            
+            # 経過時間を表示
+            elapsed_text = f"経過時間: {interval}秒"
+            current_status = self.status_var.get()
+            if "経過時間:" in current_status:
+                parts = current_status.split(" - ", 1)
+                if len(parts) > 1:
+                    current_status = parts[1]
+                else:
+                    current_status = ""
+            
+            if current_status:
+                self.status_var.set(f"{elapsed_text} - {current_status}")
+            else:
+                self.status_var.set(elapsed_text)
+        
+        # 新しい入力要求の時間を記録
+        self.last_input_time = time.time()
+    
+    def stop_input_timer(self):
+        """経過時間タイマーを停止"""
+        if self.elapsed_timer:
+            self.root.after_cancel(self.elapsed_timer)
+            self.elapsed_timer = None
+    
+    def update_current_test_display(self, test_info: str):
+        """現在のテストパターン表示を更新"""
+        self.current_test_label.config(text=f"テスト状況: {test_info}")
     
     def validate_settings(self) -> bool:
         """設定の妥当性をチェック"""
@@ -234,8 +393,24 @@ class LPDDRTestGUI:
             if not pattern_str:
                 raise ValidationError("テストパターンが設定されていません", field="patterns")
             
-            patterns = [int(p.strip()) for p in pattern_str.split(',')]
-            ConfigValidator.validate_patterns(patterns)
+            # 辞書形式の入力をチェック
+            if pattern_str.startswith('{') or "'id'" in pattern_str:
+                raise ValidationError(
+                    "テストパターンは数値のみを入力してください。\n"
+                    "例: 1,15 または 1 または 15\n"
+                    "現在の入力: " + pattern_str[:50] + "...",
+                    field="patterns"
+                )
+            
+            try:
+                patterns = [int(p.strip()) for p in pattern_str.split(',')]
+                ConfigValidator.validate_patterns(patterns)
+            except ValueError as ve:
+                raise ValidationError(
+                    f"テストパターンに無効な値が含まれています: {pattern_str}\n"
+                    "正しい形式: 数値をカンマ区切りで入力 (例: 1,15)",
+                    field="patterns"
+                )
             
             return True
             
@@ -244,6 +419,25 @@ class LPDDRTestGUI:
             return False
         except Exception as e:
             messagebox.showerror("設定エラー", f"予期しないエラー: {e}")
+            return False
+    
+    def validate_connection_settings(self) -> bool:
+        """接続設定のみの妥当性をチェック（テストパターンは除外）"""
+        try:
+            # ポートの検証
+            StringValidator.validate_non_empty_string(self.port_var.get(), "ポート")
+            
+            # ボーレートの検証
+            baudrate = int(self.baudrate_var.get())
+            ConfigValidator.validate_baudrate(baudrate)
+            
+            return True
+            
+        except (ValueError, ValidationError) as e:
+            messagebox.showerror("接続設定エラー", f"接続設定が無効です: {e}")
+            return False
+        except Exception as e:
+            messagebox.showerror("接続設定エラー", f"予期しないエラー: {e}")
             return False
     
     def start_test(self):
@@ -257,6 +451,12 @@ class LPDDRTestGUI:
             return
         
         try:
+            # シリアルログエリアをクリア
+            self.clear_results()
+            
+            # テスト開始時間を記録
+            self.test_start_time = time.time()
+            
             # 設定を取得
             config = TestConfig(
                 port=self.port_var.get(),
@@ -272,6 +472,11 @@ class LPDDRTestGUI:
             self.total_steps = len(frequencies) * len(patterns) + 1  # +1 for diagnostics
             self.test_progress = 0
             self.is_test_running = True
+            
+            # プログレスバーを初期化
+            self.progress_var.set(0)
+            self.progress_bar.update()
+            print(f"Progress initialized: 0/{self.total_steps} = 0%")  # デバッグ用
             
             # テストを別スレッドで実行
             self.test_thread = threading.Thread(
@@ -296,51 +501,67 @@ class LPDDRTestGUI:
     def run_test_thread(self, config, frequencies, patterns):
         """テスト実行スレッド"""
         try:
-            self.automation = LPDDRAutomation(config)
+            self.automation = LPDDRAutomation(config, gui_callback=self.log_message, gui_status_callback=self.update_current_test_display)
             
             # 接続テスト
             self.log_queue.put(("接続を試行中...", "INFO"))
             self.update_progress(0, self.total_steps, "接続中...")
+            
+            # 最初の入力要求時の経過時間タイマーを開始
+            self.start_input_timer()
             
             if not self.automation.connect():
                 self.log_queue.put((ErrorMessages.CONNECTION_FAILED.value, "ERROR"))
                 return
                 
             self.log_queue.put((SuccessMessages.CONNECTION_ESTABLISHED.value, "SUCCESS"))
+            self.update_progress(0, self.total_steps, "接続完了")
             
             # 各周波数でテスト実行
             for i, frequency in enumerate(frequencies):
                 self.log_queue.put((f"周波数 {frequency}MHz のテストを開始します", "INFO"))
+                self.update_current_test_display(f"{frequency}MHz テスト開始")
+                print(f"Starting frequency test: {frequency}MHz")  # デバッグ用
                 
                 try:
                     results = self.automation.run_frequency_test(frequency)
+                    print(f"Frequency test completed: {frequency}MHz, results: {len(results)}")  # デバッグ用
                     
-                    for pattern, result in results.items():
-                        self.test_progress += 1
-                        self.update_progress(self.test_progress, self.total_steps, f"{frequency}MHz パターン{pattern}")
-                        
-                        status = "SUCCESS" if result.value == "PASS" else "ERROR"
-                        self.log_queue.put((f"{frequency}MHz {pattern}: {result.value}", status))
+                    # 周波数テスト完了
+                    self.log_queue.put((f"周波数 {frequency}MHz のテストが完了しました", "SUCCESS"))
+                    
+                    # 次の周波数がある場合、周波数選択メニューが表示される
+                    if i < len(frequencies) - 1:
+                        self.log_queue.put(("次の周波数のテストに移行します", "INFO"))
+                        self.update_current_test_display("次の周波数に移行中...")
                         
                 except Exception as e:
                     self.log_queue.put((f"周波数 {frequency}MHz のテストでエラー: {e}", "ERROR"))
+                    print(f"Frequency test error: {frequency}MHz - {e}")  # デバッグ用
             
-            # 診断テスト実行
-            self.log_queue.put(("診断テストを開始します", "INFO"))
-            self.update_progress(self.test_progress, self.total_steps, "診断テスト実行中...")
-            
-            try:
-                diag_result = self.automation.run_diagnostics_test()
-                self.test_progress += 1
-                self.update_progress(self.test_progress, self.total_steps, "診断テスト完了")
+            # 診断テスト実行（設定に基づく）
+            if getattr(self, 'require_diagnostics', True):
+                self.log_queue.put(("診断テストを開始します", "INFO"))
+                self.update_current_test_display("診断テスト実行中...")
+                self.update_progress(self.test_progress, self.total_steps, "診断テスト実行中...")
                 
-                status = "SUCCESS" if diag_result.result.value == "PASS" else "WARNING"
-                self.log_queue.put((f"診断テスト結果: {diag_result.result.value}", status))
-            except Exception as e:
-                self.log_queue.put((f"診断テストでエラー: {e}", "ERROR"))
+                try:
+                    diag_result = self.automation.run_diagnostics_test()
+                    self.test_progress += 1
+                    self.update_progress(self.test_progress, self.total_steps, "診断テスト完了")
+                    self.update_current_test_display("診断テスト完了")
+                    
+                    status = "SUCCESS" if diag_result.result.value == "PASS" else "WARNING"
+                    self.log_queue.put((f"診断テスト結果: {diag_result.result.value}", status))
+                except Exception as e:
+                    self.log_queue.put((f"診断テストでエラー: {e}", "ERROR"))
+            else:
+                self.log_queue.put(("診断テストはスキップされます", "INFO"))
+                self.log_message("診断テストは設定により無効化されています", "INFO")
             
             # 最終レポート生成
             self.log_queue.put(("レポートを生成中...", "INFO"))
+            self.update_current_test_display("レポート生成中...")
             self.generate_report()
             
         except Exception as e:
@@ -352,6 +573,10 @@ class LPDDRTestGUI:
             self.is_test_running = False
             self.log_queue.put(("テストが完了しました", "SUCCESS"))
             self.update_progress(self.total_steps, self.total_steps, "完了")
+            self.update_current_test_display("テスト完了")
+            
+            # 経過時間タイマーを停止
+            self.stop_input_timer()
     
     def stop_test(self):
         """テストを停止"""
@@ -363,9 +588,13 @@ class LPDDRTestGUI:
         if self.automation:
             self.automation.disconnect()
         
+        # 経過時間タイマーを停止
+        self.stop_input_timer()
+        
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.status_var.set("停止")
+        self.update_current_test_display("テスト停止")
         self.log_message("テストが停止されました", "WARNING")
     
     def generate_report(self):
@@ -373,30 +602,31 @@ class LPDDRTestGUI:
         if not self.automation or not self.automation.test_results:
             return
             
-        report = "=== LPDDR テストレポート ===\n\n"
+        # レポートヘッダーをテストログに出力
+        self.log_message("=== LPDDR テストレポート ===", "INFO")
         
+        # 各テスト結果を個別に出力
         for result in self.automation.test_results:
-            report += f"ステップ: {result.step.value}\n"
-            report += f"周波数: {result.frequency}MHz\n"
-            report += f"パターン: {result.pattern}\n"
-            report += f"結果: {result.result.value}\n"
-            report += f"メッセージ: {result.message}\n"
-            report += "-" * 40 + "\n"
+            self.log_message(f"ステップ: {result.step.value}", "INFO")
+            self.log_message(f"周波数: {result.frequency}MHz", "INFO")
+            self.log_message(f"パターン: {result.pattern}", "INFO")
+            self.log_message(f"結果: {result.result.value}", "INFO")
+            self.log_message(f"メッセージ: {result.message}", "INFO")
+            self.log_message("-" * 40, "INFO")
         
         # 総合判定
         memory_tests = [r for r in self.automation.test_results if r.step.value == "memory_test"]
         diag_tests = [r for r in self.automation.test_results if r.step.value == "diagnostics"]
         
-        report += "\n=== 総合判定 ===\n"
+        self.log_message("", "INFO")  # 空行
+        self.log_message("=== 総合判定 ===", "INFO")
+        
         if any(r.result.value == "PASS" for r in memory_tests):
-            report += "結果: メモリは正常に動作しています\n"
+            self.log_message("結果: メモリは正常に動作しています", "SUCCESS")
         elif any(r.result.value == "PASS" for r in diag_tests):
-            report += "結果: メモリは動作しているが不安定な可能性があります\n"
+            self.log_message("結果: メモリは動作しているが不安定な可能性があります", "WARNING")
         else:
-            report += "結果: メモリが動作していません\n"
-            
-        self.result_text.delete(1.0, tk.END)
-        self.result_text.insert(1.0, report)
+            self.log_message("結果: メモリが動作していません", "ERROR")
     
     def save_config(self):
         """設定を保存"""
@@ -449,7 +679,14 @@ class LPDDRTestGUI:
                 self.port_var.set(config['serial']['port'])
                 self.baudrate_var.set(str(config['serial']['baudrate']))
                 self.freq_var.set(','.join(map(str, config['test']['frequencies'])))
-                self.pattern_var.set(','.join(map(str, config['test']['patterns'])))
+                
+                # patternsが辞書のリストの場合はidを抽出
+                patterns_config = config['test']['patterns']
+                if isinstance(patterns_config, list) and patterns_config and isinstance(patterns_config[0], dict):
+                    patterns = [p.get('id', 1) for p in patterns_config if 'id' in p]
+                else:
+                    patterns = patterns_config
+                self.pattern_var.set(','.join(map(str, patterns)))
                 
                 self.log_message(f"設定を読み込みました: {filename}", "SUCCESS")
                 messagebox.showinfo("読み込み完了", f"設定を {filename} から読み込みました")
@@ -463,7 +700,9 @@ class LPDDRTestGUI:
         try:
             # デフォルト設定ファイルが存在する場合は読み込み
             default_config_path = "config.yaml"
+            
             if os.path.exists(default_config_path):
+                self.log_message(f"設定ファイルを読み込み中: {default_config_path}", "INFO")
                 with open(default_config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
                 
@@ -472,15 +711,28 @@ class LPDDRTestGUI:
                 
                 test_config = config.get('test', {})
                 frequencies = test_config.get('frequencies', [800, 666])
-                patterns = test_config.get('patterns', [1, 15])
+                patterns_config = test_config.get('patterns', [1, 15])
+                
+                # patternsが辞書のリストの場合はidを抽出
+                if isinstance(patterns_config, list) and patterns_config and isinstance(patterns_config[0], dict):
+                    patterns = [p.get('id', 1) for p in patterns_config if 'id' in p]
+                else:
+                    patterns = patterns_config
                 
                 self.freq_var.set(','.join(map(str, frequencies)))
                 self.pattern_var.set(','.join(map(str, patterns)))
                 
-                self.log_message("デフォルト設定を読み込みました", "INFO")
+                # 診断テスト設定を読み込み
+                judgment_config = config.get('judgment', {})
+                self.require_diagnostics = judgment_config.get('require_diagnostics', True)
+                
+                self.log_message(f"デフォルト設定を読み込みました: {default_config_path}", "SUCCESS")
             else:
                 # デフォルト値を使用
+                self.log_message(f"設定ファイルが見つかりません: {default_config_path}", "WARNING")
+                
                 self.port_var.set('/dev/ttyUSB0')
+                self.require_diagnostics = True  # デフォルトは診断テストを実行
                 self.baudrate_var.set('115200')
                 self.freq_var.set('800,666')
                 self.pattern_var.set('1,15')
@@ -655,14 +907,20 @@ Note: Commands are executed in the main GUI context.
                 timeout=30.0
             )
             
-            self.automation = LPDDRAutomation(config)
+            self.automation = LPDDRAutomation(config, gui_callback=self.log_message, gui_status_callback=self.update_current_test_display)
+            
+            # 接続確認中のポップアップを表示
+            self.show_connection_popup()
             
             if self.automation.connect():
+                self.hide_connection_popup()
                 return f"✓ Connected to {config.port} at {config.baudrate} baud"
             else:
+                self.hide_connection_popup()
                 return f"✗ Failed to connect to {config.port}"
                 
         except Exception as e:
+            self.hide_connection_popup()
             return f"Connection error: {e}"
     
     def handle_terminal_disconnect(self) -> str:
@@ -827,6 +1085,114 @@ Note: Commands are executed in the main GUI context.
         
         # 定期的に再チェック
         self.root.after(GUIElements.QUEUE_CHECK_INTERVAL.value, self.check_log_queue)
+    
+    def show_connection_popup(self):
+        """接続確認中のポップアップを表示"""
+        self.connection_popup = tk.Toplevel(self.root)
+        self.connection_popup.title("接続確認中")
+        self.connection_popup.geometry("400x200")
+        self.connection_popup.resizable(False, False)
+        
+        # 中央に配置
+        self.connection_popup.transient(self.root)
+        self.connection_popup.grab_set()
+        
+        # メインフレーム
+        main_frame = ttk.Frame(self.connection_popup, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # アイコンとメッセージ
+        icon_label = ttk.Label(main_frame, text="🔄", font=("Arial", 24))
+        icon_label.pack(pady=(0, 10))
+        
+        message_label = ttk.Label(
+            main_frame, 
+            text="ターゲットデバイスとの接続を確認中...\n\n最大1分間お待ちください",
+            font=("Arial", 12),
+            justify=tk.CENTER
+        )
+        message_label.pack(pady=(0, 20))
+        
+        # プログレスバー
+        self.connection_progress = ttk.Progressbar(
+            main_frame, 
+            mode='indeterminate',
+            length=300
+        )
+        self.connection_progress.pack(pady=(0, 20))
+        self.connection_progress.start()
+        
+        # キャンセルボタン
+        cancel_button = ttk.Button(
+            main_frame,
+            text="キャンセル",
+            command=self.cancel_connection
+        )
+        cancel_button.pack()
+        
+        # ウィンドウを中央に配置
+        self.connection_popup.update_idletasks()
+        x = (self.connection_popup.winfo_screenwidth() // 2) - (400 // 2)
+        y = (self.connection_popup.winfo_screenheight() // 2) - (200 // 2)
+        self.connection_popup.geometry(f"400x200+{x}+{y}")
+    
+    def hide_connection_popup(self):
+        """接続確認ポップアップを非表示"""
+        if hasattr(self, 'connection_popup') and self.connection_popup:
+            self.connection_popup.destroy()
+            self.connection_popup = None
+    
+    def cancel_connection(self):
+        """接続をキャンセル"""
+        if hasattr(self, 'automation') and self.automation:
+            self.automation.disconnect()
+        self.hide_connection_popup()
+        self.log_message("接続がキャンセルされました", "WARNING")
+    
+    def check_connection(self):
+        """接続確認ボタンのハンドラー"""
+        if not self.validate_connection_settings():
+            self.log_message("設定エラー: 接続設定を確認してください", "ERROR")
+            return
+        
+        # 接続確認中のポップアップを表示
+        self.show_connection_popup()
+        
+        def connection_thread():
+            try:
+                config = TestConfig(
+                    port=self.port_var.get(),
+                    baudrate=int(self.baudrate_var.get()),
+                    timeout=30.0
+                )
+                
+                self.automation = LPDDRAutomation(config, gui_callback=self.log_message, gui_status_callback=self.update_current_test_display)
+                
+                self.log_message("接続テストを開始しています...", "INFO")
+                connection_result = self.automation.connect()
+                self.log_message(f"接続テスト結果: {connection_result}", "INFO")
+                
+                if connection_result:
+                    self.hide_connection_popup()
+                    self.log_message(f"✓ 接続確認成功: {config.port} ({config.baudrate} baud)", "SUCCESS")
+                    self.log_message("ターゲットデバイスがLPDDRテストの準備完了状態です", "INFO")
+                    self.status_var.set("接続済み")
+                    self.log_message(f"GUI状態更新: {self.status_var.get()}", "INFO")
+                else:
+                    self.hide_connection_popup()
+                    self.log_message(f"✗ 接続確認失敗: {config.port}", "ERROR")
+                    self.log_message("ターゲットデバイスとの通信ができません", "ERROR")
+                    self.status_var.set("接続失敗")
+                    self.log_message(f"GUI状態更新: {self.status_var.get()}", "INFO")
+                    
+            except Exception as e:
+                self.hide_connection_popup()
+                self.log_message(f"✗ 接続確認エラー: {e}", "ERROR")
+                self.status_var.set("接続エラー")
+        
+        # 別スレッドで接続確認を実行
+        connection_thread_obj = threading.Thread(target=connection_thread, daemon=True)
+        connection_thread_obj.start()
 
 
 def main():
