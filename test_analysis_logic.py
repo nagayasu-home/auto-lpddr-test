@@ -92,6 +92,51 @@ class TestEyePatternAnalysisLogic(unittest.TestCase):
         self.assertEqual(result.result, "PASS")
         self.assertGreater(result.quality, 0.0)
     
+    def test_rx_eye_pattern_detailed_analysis(self):
+        """Rx Eye Pattern詳細解析のテスト"""
+        # Rxテストのサンプルデータ
+        rx_test_data = """
+        #### Finish Diagnostics test (Rx Eye Pattern)
+        Rx Eye Pattern Test completed successfully.
+        Quality: 0.92
+        Timing: 2.8ns
+        Signal margin: 0.75V
+        """
+        
+        # 解析実行
+        self.automation._analyze_eye_pattern_results(rx_test_data)
+        
+        # 結果の確認
+        self.assertEqual(len(self.automation.detailed_eye_pattern_results), 1)
+        result = self.automation.detailed_eye_pattern_results[0]
+        self.assertEqual(result.pattern_type, "rx")
+        self.assertEqual(result.result, "PASS")
+        self.assertGreater(result.quality, 0.5)  # 閾値以上
+        self.assertGreater(result.timing, 1.0)   # タイミングマージン十分
+    
+    def test_signal_quality_detailed_analysis(self):
+        """詳細な信号品質解析のテスト"""
+        # 成功ケース
+        success_data = "Eye pattern test completed successfully. Quality: 0.95, Timing: 3.2ns"
+        analysis = self.automation._analyze_signal_quality_detailed(success_data)
+        
+        self.assertTrue(analysis['signal_quality_above_threshold'])
+        self.assertTrue(analysis['timing_margin_sufficient'])
+        self.assertTrue(analysis['no_errors_detected'])
+        self.assertGreater(analysis['quality_score'], 0.5)
+        self.assertGreater(analysis['timing_value'], 1.0)
+        
+        # 失敗ケース
+        fail_data = "Error: Signal quality below threshold. Quality: 0.3, Timing: 0.5ns"
+        analysis = self.automation._analyze_signal_quality_detailed(fail_data)
+        
+        self.assertFalse(analysis['signal_quality_above_threshold'])
+        self.assertFalse(analysis['timing_margin_sufficient'])
+        self.assertFalse(analysis['no_errors_detected'])
+        self.assertLess(analysis['quality_score'], 0.5)
+        self.assertLess(analysis['timing_value'], 1.0)
+        self.assertIn('error', analysis['error_messages'])
+    
     def test_eye_pattern_analysis_summary(self):
         """Eye Pattern分析サマリーのテスト"""
         # テストデータを追加
