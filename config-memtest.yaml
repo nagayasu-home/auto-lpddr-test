@@ -36,7 +36,7 @@ test:
   enable_2d_training: false
   
   # アイパターンテスト設定
-  enable_eye_pattern: true
+  enable_eye_pattern: false
   eye_pattern:
     lanes: 4  # テストするレーン数
     bits: 8   # テストするビット数

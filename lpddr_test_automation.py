@@ -470,45 +470,74 @@ class LPDDRAutomation:
         # 周波数選択後、すぐに次のプロンプト（2Dトレーニング選択）が表示される
         # トレーニングはバックグラウンドで実行されるため、完了待機は不要
         
-        # 2Dトレーニング設定
+        # 2Dトレーニング設定（バッファチェックとポーリング）
         try:
-            if self.wait_for_prompt(PromptPatterns.SELECT_2D_TRAINING.value):
-                # デバッグログ: 設定値を確認
-                logger.info(f"2D training setting: enable_2d_training = {self.config.enable_2d_training}")
+            # バッファをチェックしてからポーリング
+            logger.info("Checking buffer for 2D training selection prompt")
+            time.sleep(0.5)  # 短い待機でレスポンスを確認
+            
+            # バッファをチェックしてからポーリング
+            response_buffer = ""
+            start_time = time.time()
+            timeout_seconds = 5.0  # 短いタイムアウト
+            
+            while time.time() - start_time < timeout_seconds:
+                if self.serial_conn.in_waiting > 0:
+                    response = self.read_response(0.1)
+                    if response:
+                        response_buffer += response
+                        logger.info(f"Received response: '{response}'")
+                        
+                        # 2Dトレーニング選択プロンプトを検出
+                        if "select 2D training mode" in response_buffer:
+                            logger.info("2D training selection prompt detected")
+                            break
+                        # テストモード選択プロンプトを検出
+                        elif "select test mode" in response_buffer:
+                            logger.info("Test mode selection prompt detected")
+                            break
+                time.sleep(0.1)
+            
+            # タイムアウトチェック
+            if time.time() - start_time >= timeout_seconds:
+                logger.warning("Timeout waiting for 2D training or test mode selection prompt")
+            
+            # デバッグログ: 設定値を確認
+            logger.info(f"2D training setting: enable_2d_training = {self.config.enable_2d_training}")
+            
+            if self.config.enable_2d_training:
+                log_to_gui("=== 2D Training Test Started ===", "INFO", self.gui_callback)
+                training_cmd = TestCommands.ENABLE_2D_TRAINING.value
+                logger.info(f"Sending 2D training enable command: '{training_cmd}'")
+                for i, char in enumerate(training_cmd):
+                    self.serial_conn.write(char.encode('utf-8'))
+                    time.sleep(0.1)
+                logger.info("2D training enabled")
+                # 送信完了後にコマンドをログ出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Please Hit number key:{training_cmd}", "SERIAL")
+                # 2Dトレーニング完了待機（実際のプロンプトに合わせて修正）
+                # "Training Complete 7"を待機
+                self.wait_for_prompt("Training Complete 7")
+                log_to_gui("2D Training completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
+            else:
+                log_to_gui("=== 2D Training Test Disabled ===", "INFO", self.gui_callback)
+                training_cmd = TestCommands.DISABLE_2D_TRAINING.value
+                logger.info(f"Sending 2D training disable command: '{training_cmd}'")
+                for i, char in enumerate(training_cmd):
+                    self.serial_conn.write(char.encode('utf-8'))
+                    time.sleep(0.1)
+                log_to_gui("2D Training disabled - Test Result: SKIPPED", "INFO", self.gui_callback)
+                logger.info("2D training disabled")
+                # 送信完了後にコマンドをログ出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Please Hit number key:{training_cmd}", "SERIAL")
+            
+            # 2Dトレーニング選択後のレスポンス待機（実際のプロンプトに合わせて修正）
+            # 2Dトレーニング完了後は、テストモード選択に進む
+            # アイパターンテストの場合は「0」（診断テスト）を選択
+            # メモリテストの場合は「1」（メモリテスト）を選択
                 
-                if self.config.enable_2d_training:
-                    log_to_gui("=== 2D Training Test Started ===", "INFO", self.gui_callback)
-                    training_cmd = TestCommands.ENABLE_2D_TRAINING.value
-                    logger.info(f"Sending 2D training enable command: '{training_cmd}'")
-                    for i, char in enumerate(training_cmd):
-                        self.serial_conn.write(char.encode('utf-8'))
-                        time.sleep(0.1)
-                    logger.info("2D training enabled")
-                    # 送信完了後にコマンドをログ出力
-                    if hasattr(self, 'gui_callback') and self.gui_callback:
-                        self.gui_callback(f"Please Hit number key:{training_cmd}", "SERIAL")
-                    # 2Dトレーニング完了待機（実際のプロンプトに合わせて修正）
-                    # "Training Complete 7"を待機
-                    self.wait_for_prompt("Training Complete 7")
-                    log_to_gui("2D Training completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
-                else:
-                    log_to_gui("=== 2D Training Test Disabled ===", "INFO", self.gui_callback)
-                    training_cmd = TestCommands.DISABLE_2D_TRAINING.value
-                    logger.info(f"Sending 2D training disable command: '{training_cmd}'")
-                    for i, char in enumerate(training_cmd):
-                        self.serial_conn.write(char.encode('utf-8'))
-                        time.sleep(0.1)
-                    log_to_gui("2D Training disabled - Test Result: SKIPPED", "INFO", self.gui_callback)
-                    logger.info("2D training disabled")
-                    # 送信完了後にコマンドをログ出力
-                    if hasattr(self, 'gui_callback') and self.gui_callback:
-                        self.gui_callback(f"Please Hit number key:{training_cmd}", "SERIAL")
-                
-                # 2Dトレーニング選択後のレスポンス待機（実際のプロンプトに合わせて修正）
-                # 2Dトレーニング完了後は、テストモード選択に進む
-                # アイパターンテストの場合は「0」（診断テスト）を選択
-                # メモリテストの場合は「1」（メモリテスト）を選択
-                    
         except TimeoutError:
             logger.warning("2D training prompt not found or timeout")
         
@@ -567,7 +596,16 @@ class LPDDRAutomation:
             
             # resultsをself.test_resultsに追加
             for key, result in results.items():
-                self.test_results.append(result)
+                # TestResultDataオブジェクトとして追加
+                test_result_data = TestResultData(
+                    step=TestStep.MEMORY_TEST,
+                    frequency=frequency,
+                    pattern=result.pattern if hasattr(result, 'pattern') else 0,
+                    result=result.result if hasattr(result, 'result') else result,
+                    message=result.message if hasattr(result, 'message') else "",
+                    timestamp=result.timestamp if hasattr(result, 'timestamp') else time.time()
+                )
+                self.test_results.append(test_result_data)
             
             return results
         else:
@@ -871,6 +909,32 @@ class LPDDRAutomation:
                             self.serial_conn.write(b'\r\n')
                             logger.info("Enter key sent for frequency change")
                             
+                            # 周波数変更シーケンス完了を待機
+                            logger.info("Waiting for frequency change sequence completion")
+                            time.sleep(1.0)  # 短い待機でレスポンスを確認
+                            
+                            # 周波数選択プロンプトを待機
+                            response_buffer = ""
+                            start_time = time.time()
+                            timeout_seconds = 10.0
+                            
+                            while time.time() - start_time < timeout_seconds:
+                                if self.serial_conn.in_waiting > 0:
+                                    response = self.read_response(0.1)
+                                    if response:
+                                        response_buffer += response
+                                        logger.info(f"Received response: '{response}'")
+                                        
+                                        # 周波数選択プロンプトを検出
+                                        if "set frequency for LPDDR" in response_buffer:
+                                            logger.info("Frequency selection prompt detected - frequency change sequence completed")
+                                            break
+                                time.sleep(0.1)
+                            
+                            # タイムアウトチェック
+                            if time.time() - start_time >= timeout_seconds:
+                                logger.warning("Timeout waiting for frequency selection prompt")
+                            
                     except TimeoutError as e:
                         logger.warning(f"Turn-OFF SW1-1 prompt not found after Finish selection: {e}")
                         # タイムアウトした場合、現在のレスポンスを確認
@@ -890,7 +954,16 @@ class LPDDRAutomation:
         
         # resultsをself.test_resultsに追加
         for key, result in results.items():
-            self.test_results.append(result)
+            # TestResultDataオブジェクトとして追加
+            test_result_data = TestResultData(
+                step=TestStep.MEMORY_TEST,
+                frequency=frequency,
+                pattern=result.pattern if hasattr(result, 'pattern') else 0,
+                result=result.result if hasattr(result, 'result') else result,
+                message=result.message if hasattr(result, 'message') else "",
+                timestamp=result.timestamp if hasattr(result, 'timestamp') else time.time()
+            )
+            self.test_results.append(test_result_data)
         
         return results
     
