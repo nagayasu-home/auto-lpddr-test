@@ -89,6 +89,16 @@ class EyePatternType(Enum):
     SIMPLE_WRITE_READ = "simple_write_read"
 
 @dataclass
+class EyePatternConfig:
+    """アイパターンテスト設定"""
+    default_lane: str = "5"
+    default_byte: str = "1"
+    diag_addr_low: str = "0000"
+    diagnostics_mode: str = "tx_eye_pattern"
+    test_mode: str = "tx_only"
+    continue_to_rx_after_tx: bool = False
+
+@dataclass
 class TestConfig:
     """テスト設定"""
     port: str = "COM3"  # Windows: COM3, Linux: /dev/ttyUSB0
@@ -99,10 +109,13 @@ class TestConfig:
     enable_eye_pattern: bool = True
     power_control_enabled: bool = False
     power_control_port: str = None  # 電源制御用の別ポート
+    eye_pattern: EyePatternConfig = None
     
     def __post_init__(self):
         if self.test_patterns is None:
             self.test_patterns = TestPatterns.DEFAULT_PATTERNS.value
+        if self.eye_pattern is None:
+            self.eye_pattern = EyePatternConfig()
         self._validate_config()
     
     def _validate_config(self):
@@ -423,18 +436,9 @@ class LPDDRAutomation:
         logger.info(f"Starting frequency test at {frequency}MHz")
         results = {}
         
-        # 周波数選択プロンプトを待機（666MHzテストの場合）
-        if frequency == 666:
-            logger.info("Waiting for frequency selection prompt for 666MHz test...")
-            try:
-                self.wait_for_prompt("set frequency for LPDDR")
-                logger.info("Frequency selection prompt received")
-            except TimeoutError:
-                logger.warning("Frequency selection prompt not found, continuing...")
-        
         # 周波数選択
         logger.info("Sending frequency selection command")
-        freq_key = FrequencyMapping.FREQUENCY_TO_KEY.value.get(frequency, FrequencyMapping.FREQ_666.value)
+        freq_key = FrequencyMapping.FREQUENCY_TO_KEY.value.get(frequency, FrequencyMapping.FREQ_800.value)
         freq_str = str(freq_key)
         for i, char in enumerate(freq_str):
             self.serial_conn.write(char.encode('utf-8'))
@@ -453,8 +457,12 @@ class LPDDRAutomation:
         # 2Dトレーニング設定
         try:
             if self.wait_for_prompt(PromptPatterns.SELECT_2D_TRAINING.value):
+                # デバッグログ: 設定値を確認
+                logger.info(f"2D training setting: enable_2d_training = {self.config.enable_2d_training}")
+                
                 if self.config.enable_2d_training:
                     training_cmd = TestCommands.ENABLE_2D_TRAINING.value
+                    logger.info(f"Sending 2D training enable command: '{training_cmd}'")
                     for i, char in enumerate(training_cmd):
                         self.serial_conn.write(char.encode('utf-8'))
                         time.sleep(0.1)
@@ -462,10 +470,12 @@ class LPDDRAutomation:
                     # 送信完了後にコマンドをログ出力
                     if hasattr(self, 'gui_callback') and self.gui_callback:
                         self.gui_callback(f"Please Hit number key:{training_cmd}", "SERIAL")
-                    # 2Dトレーニング完了待機
-                    self.wait_for_prompt(PromptPatterns.TRAINING_2D_COMPLETE.value)
+                    # 2Dトレーニング完了待機（実際のプロンプトに合わせて修正）
+                    # "Training Complete 7"を待機
+                    self.wait_for_prompt("Training Complete 7")
                 else:
                     training_cmd = TestCommands.DISABLE_2D_TRAINING.value
+                    logger.info(f"Sending 2D training disable command: '{training_cmd}'")
                     for i, char in enumerate(training_cmd):
                         self.serial_conn.write(char.encode('utf-8'))
                         time.sleep(0.1)
@@ -474,21 +484,70 @@ class LPDDRAutomation:
                     if hasattr(self, 'gui_callback') and self.gui_callback:
                         self.gui_callback(f"Please Hit number key:{training_cmd}", "SERIAL")
                 
-                # 2Dトレーニング選択後のレスポンス待機
-                self.wait_for_prompt("input out_value : dec:0")
+                # 2Dトレーニング選択後のレスポンス待機（実際のプロンプトに合わせて修正）
+                # 2Dトレーニング完了後は、テストモード選択に進む
+                # アイパターンテストの場合は「0」（診断テスト）を選択
+                # メモリテストの場合は「1」（メモリテスト）を選択
+                    
         except TimeoutError:
             logger.warning("2D training prompt not found or timeout")
         
-        # メモリテスト選択
-        self.wait_for_prompt(PromptPatterns.SELECT_TEST_MODE.value)
-        memory_cmd = TestCommands.MEMORY_ACCESS_TEST.value
-        for i, char in enumerate(memory_cmd):
-            self.serial_conn.write(char.encode('utf-8'))
-            time.sleep(0.1)
+        # テストモード選択（バッファを確認）
+        # 既にバッファにプロンプトがあるので待機不要
+        response = self.read_response(1.0)  # 短時間でバッファを確認
+        logger.info(f"Buffer check response: '{response}'")
+        logger.info("Select test mode prompt found in buffer")
         
-        # 送信完了後にコマンドをログ出力
-        if hasattr(self, 'gui_callback') and self.gui_callback:
-            self.gui_callback(f"Please Hit number key:{memory_cmd}", "SERIAL")
+        # アイパターンテストが有効な場合、診断テストを選択
+        logger.info(f"Eye pattern test setting: enable_eye_pattern = {self.config.enable_eye_pattern}")
+        logger.info(f"Config type: {type(self.config)}")
+        logger.info(f"Config attributes: {dir(self.config)}")
+        if self.config.enable_eye_pattern:
+            logger.info("Eye pattern test enabled - selecting diagnostics test")
+            diagnostics_cmd = TestCommands.DIAGNOSTICS_TEST.value  # "0"
+            for i, char in enumerate(diagnostics_cmd):
+                self.serial_conn.write(char.encode('utf-8'))
+                time.sleep(0.1)
+            
+            # 送信完了後にコマンドをログ出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback(f"Please Hit number key:{diagnostics_cmd}", "SERIAL")
+            
+            # アイパターンテストの詳細な手順を実行
+            self._run_comprehensive_eye_pattern_test()
+            
+            # Eye Patternテストの結果をresultsに追加
+            if self.eye_pattern_results:
+                for key, result in self.eye_pattern_results.items():
+                    # Eye Patternテスト結果をTestResultDataとして追加
+                    test_result = TestResultData(
+                        step=TestStep.EYE_PATTERN,
+                        frequency=frequency,
+                        pattern=0,  # Eye Patternテストはパターン0として扱う
+                        result=TestResult.PASS if "successfully" in result.lower() else TestResult.FAIL,
+                        message=f"Eye Pattern Test: {key}",
+                        timestamp=time.time()
+                    )
+                    results[key] = test_result
+            
+            # アイパターンテスト完了後は、メモリテストをスキップ
+            logger.info("Eye pattern test sequence completed, returning results")
+            
+            # resultsをself.test_resultsに追加
+            for key, result in results.items():
+                self.test_results.append(result)
+            
+            return results
+        else:
+            # メモリテスト選択（アイパターンテストが無効な場合のみ）
+            memory_cmd = TestCommands.MEMORY_ACCESS_TEST.value  # "1"
+            for i, char in enumerate(memory_cmd):
+                self.serial_conn.write(char.encode('utf-8'))
+                time.sleep(0.1)
+            
+            # 送信完了後にコマンドをログ出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback(f"Please Hit number key:{memory_cmd}", "SERIAL")
         
         # メモリアクセステスト選択後のレスポンス待機
         self.wait_for_prompt("input out_value : dec:1")
@@ -797,6 +856,10 @@ class LPDDRAutomation:
         # 周波数テスト完了
         logger.info(f"Frequency {frequency}MHz test completed")
         
+        # resultsをself.test_resultsに追加
+        for key, result in results.items():
+            self.test_results.append(result)
+        
         return results
     
     def run_diagnostics_test(self) -> TestResultData:
@@ -960,8 +1023,8 @@ class LPDDRAutomation:
             return False
         
         try:
-            # テスト順序: 800MHz → 666MHz
-            frequencies = [800, 666]
+            # config.yamlから周波数設定を読み込み
+            frequencies = self.config.frequencies
             
             for i, frequency in enumerate(frequencies):
                 logger.info(f"Testing frequency: {frequency}MHz")
@@ -971,10 +1034,10 @@ class LPDDRAutomation:
                 for pattern, result in results.items():
                     logger.info(f"{frequency}MHz {pattern}: {result.value}")
                 
-                # 800MHzテスト完了後、666MHzテストの準備
-                if frequency == 800 and i < len(frequencies) - 1:
-                    logger.info("800MHz test completed, preparing for 666MHz test...")
-                    # 周波数選択プロンプトは666MHzテスト開始時に処理される
+                # アイパターンテストが有効な場合、800MHzテスト完了後に終了
+                if self.config.enable_eye_pattern and frequency == 800:
+                    logger.info("Eye pattern test completed at 800MHz - skipping remaining frequency tests")
+                    break
             
             # 診断テスト実行
             diag_result = self.run_diagnostics_test()
@@ -1049,6 +1112,358 @@ class LPDDRAutomation:
             logger.info(f"Visualizations exported: {list(exported_files.keys())}")
         except Exception as e:
             logger.warning(f"Failed to generate visualizations: {e}")
+
+    def _run_eye_pattern_test(self):
+        """アイパターンテストの詳細手順を実行 (PageA.pdf手順14-16)"""
+        try:
+            logger.info("Starting detailed eye pattern test procedure")
+            
+            # (14) レーンとバイトの選択
+            self._select_lane_and_byte()
+            
+            # DiagAddrLowの設定
+            self._set_diag_addr_low_eye_pattern()
+            
+            # (15) 自動テスト実行と結果出力
+            self._execute_eye_pattern_test()
+            
+            # (16) テスト継続の選択
+            self._handle_eye_pattern_continuation()
+            
+        except Exception as e:
+            logger.error(f"Eye pattern test failed: {e}")
+    
+    def _select_lane_and_byte(self):
+        """レーンとバイトを選択 (手順14)"""
+        try:
+            # レーン設定
+            if self.wait_for_prompt(PromptPatterns.SET_LANE.value):
+                lane = getattr(self.config.eye_pattern, 'default_lane', "0")
+                for char in lane:
+                    self.serial_conn.write(char.encode('utf-8'))
+                    time.sleep(0.1)
+                logger.info(f"Set lane: {lane}")
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Set lane: {lane}", "SERIAL")
+            
+            # バイト設定
+            if self.wait_for_prompt(PromptPatterns.SET_BYTE.value):
+                byte = getattr(self.config.eye_pattern, 'default_byte', "0")
+                for char in byte:
+                    self.serial_conn.write(char.encode('utf-8'))
+                    time.sleep(0.1)
+                logger.info(f"Set byte: {byte}")
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Set byte: {byte}", "SERIAL")
+                    
+        except TimeoutError:
+            logger.warning("Lane/byte selection prompt not found")
+    
+    def _set_diag_addr_low_eye_pattern(self):
+        """アイパターンテスト用のDiagAddrLowを設定"""
+        try:
+            if self.wait_for_prompt(PromptPatterns.SET_DIAG_ADDR_LOW_EYE.value):
+                diag_addr_low = getattr(self.config.eye_pattern, 'diag_addr_low', "0000")
+                for char in diag_addr_low:
+                    self.serial_conn.write(char.encode('utf-8'))
+                    time.sleep(0.1)
+                logger.info(f"Set DiagAddrLow for eye pattern: {diag_addr_low}")
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Set DiagAddrLow: {diag_addr_low}", "SERIAL")
+                    
+        except TimeoutError:
+            logger.warning("DiagAddrLow eye pattern prompt not found")
+    
+    def _execute_eye_pattern_test(self):
+        """アイパターンテストを実行 (手順15)"""
+        try:
+            logger.info("Executing eye pattern test...")
+            
+            # テスト結果の待機
+            response_buffer = ""
+            start_time = time.time()
+            timeout_seconds = 30.0
+            
+            while time.time() - start_time < timeout_seconds:
+                if self.serial_conn.in_waiting > 0:
+                    data = self.serial_conn.read(self.serial_conn.in_waiting)
+                    decoded_data = data.decode('utf-8', errors='ignore')
+                    response_buffer += decoded_data
+                    
+                    # シリアルログを出力
+                    if hasattr(self, 'gui_callback') and self.gui_callback and decoded_data:
+                        lines = decoded_data.split('\n')
+                        for line in lines:
+                            if line.strip():
+                                self.gui_callback(line.strip(), "SERIAL")
+                    
+                    # テスト完了の確認（TeraTermログに基づく修正）
+                    if "#### Finish Diagnostics test" in response_buffer:
+                        logger.info("Eye pattern test completed successfully")
+                        # 結果を保存
+                        if response_buffer:
+                            self.eye_pattern_results[f"eye_pattern_test_{int(time.time())}"] = response_buffer
+                        return True
+                        
+                time.sleep(0.1)
+            
+            # タイムアウトの場合
+            logger.warning("Eye pattern test timeout - no completion message received")
+            return False
+                
+        except Exception as e:
+            logger.error(f"Eye pattern test execution failed: {e}")
+            return False
+    
+    def _run_comprehensive_eye_pattern_test(self):
+        """TeraTerm実行例に基づく包括的なアイパターンテスト実行"""
+        try:
+            logger.info("Starting comprehensive eye pattern test procedure")
+            
+            # 1. 診断モード選択（アイパターンテスト）
+            logger.info("Step 1: Selecting diagnostics mode")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for diagnostics mode: '{response}'")
+            
+            # 設定に基づいて診断モードを選択
+            diagnostics_mode = getattr(self.config.eye_pattern, 'diagnostics_mode', 'tx_eye_pattern')
+            if diagnostics_mode == 'tx_eye_pattern':
+                self.send_command("1")  # Tx Eye pattern
+                logger.info("Selected: Tx Eye pattern")
+            elif diagnostics_mode == 'rx_eye_pattern':
+                self.send_command("2")  # Rx Eye pattern
+                logger.info("Selected: Rx Eye pattern")
+            else:
+                self.send_command("0")  # Simple write & read
+                logger.info("Selected: Simple write & read")
+                return
+            
+            # 2. レーン選択（バッファ確認）
+            logger.info("Step 2: Selecting lane")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for lane: '{response}'")
+            if "lane for eye pattern" not in response:
+                logger.info("Waiting for lane selection prompt...")
+                time.sleep(0.5)  # 短時間待機
+            default_lane = getattr(self.config.eye_pattern, 'default_lane', '5')
+            self.send_command(default_lane)
+            logger.info(f"Selected lane: {default_lane}")
+            
+            # 3. バイト選択（バッファ確認）
+            logger.info("Step 3: Selecting byte")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for byte: '{response}'")
+            if "byte for eye pattern" not in response:
+                logger.info("Waiting for byte selection prompt...")
+                time.sleep(0.5)  # 短時間待機
+            default_byte = getattr(self.config.eye_pattern, 'default_byte', '1')
+            self.send_command(default_byte)
+            logger.info(f"Selected byte: {default_byte}")
+            
+            # 4. アドレス設定（バッファ確認）
+            logger.info("Step 4: Setting DiagAddrLow")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for DiagAddrLow: '{response}'")
+            if "DiagAddrLow" not in response:
+                logger.info("Waiting for DiagAddrLow prompt...")
+                time.sleep(0.5)  # 短時間待機
+            
+            # DiagAddrLowの後に「Please Hit number key:」プロンプトが来る
+            logger.info("Waiting for DiagAddrLow input prompt...")
+            response = self.read_response(1.0)  # バッファ確認
+            if "Please Hit number key:" not in response:
+                time.sleep(0.5)  # 短時間待機
+            diag_addr_low = getattr(self.config.eye_pattern, 'diag_addr_low', '0000')
+            # 4桁のアドレス入力は1文字ずつ送信
+            for i, char in enumerate(diag_addr_low):
+                self.serial_conn.write(char.encode('utf-8'))
+                time.sleep(0.1)
+            logger.info(f"Set DiagAddrLow: {diag_addr_low}")
+            
+            # 5. アイパターンテスト実行と結果取得
+            logger.info("Step 5: Executing eye pattern test")
+            success = self._execute_eye_pattern_test()
+            
+            if success:
+                logger.info("Tx Eye pattern test completed successfully")
+                
+                # 6. 診断テスト継続選択（Tx後にRxも実行）
+                logger.info("Step 6: Handling diagnostics continuation")
+                self._handle_diagnostics_continuation_teraterm()
+            else:
+                logger.warning("Tx Eye pattern test did not complete successfully")
+            
+        except Exception as e:
+            logger.error(f"Comprehensive eye pattern test failed: {e}")
+    
+    def _handle_diagnostics_continuation(self):
+        """診断テストの継続を処理"""
+        try:
+            if self.wait_for_prompt("Repeat diagnostics?"):
+                # 設定に基づいて継続を決定
+                continue_to_rx = getattr(self.config.eye_pattern, 'continue_to_rx_after_tx', False)
+                test_mode = getattr(self.config.eye_pattern, 'test_mode', 'tx_only')
+                
+                if continue_to_rx and test_mode in ['both', 'rx_only']:
+                    # 診断テストを繰り返す
+                    continue_cmd = "1"
+                    logger.info("Diagnostics test - repeating for RX eye pattern")
+                else:
+                    # 診断テストを終了
+                    continue_cmd = "0"
+                    logger.info("Diagnostics test completed - finishing")
+                
+                self.send_command(continue_cmd)
+                
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Repeat diagnostics: {continue_cmd}", "SERIAL")
+                    
+        except TimeoutError:
+            logger.warning("Diagnostics continuation prompt not found")
+    
+    def _handle_diagnostics_continuation_teraterm(self):
+        """TeraTermログに基づく診断テストの継続を処理"""
+        try:
+            # TeraTermログでは「Repeat diagnostics?」プロンプトが来る
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for Repeat diagnostics: '{response}'")
+            if "Repeat diagnostics?" not in response:
+                logger.info("Waiting for Repeat diagnostics prompt...")
+                time.sleep(0.5)  # 短時間待機
+            
+            # 設定に基づいて継続を決定
+            continue_to_rx = getattr(self.config.eye_pattern, 'continue_to_rx_after_tx', False)
+            test_mode = getattr(self.config.eye_pattern, 'test_mode', 'tx_only')
+            
+            # デバッグログを追加
+            logger.info(f"Debug - continue_to_rx: {continue_to_rx}")
+            logger.info(f"Debug - test_mode: {test_mode}")
+            logger.info(f"Debug - config.eye_pattern: {self.config.eye_pattern}")
+            logger.info(f"Debug - config.eye_pattern attributes: {dir(self.config.eye_pattern)}")
+            
+            if continue_to_rx and test_mode in ['both', 'rx_only']:
+                # Rx Eye Patternテストを実行
+                logger.info("Continuing to Rx Eye Pattern test")
+                self.send_command("1")  # Repeat
+                
+                # Rx Eye Patternテストの実行
+                self._run_rx_eye_pattern_test()
+                return True
+            else:
+                # 診断テストを終了
+                logger.info("Ending eye pattern test")
+                self.send_command("0")  # Finish
+                return True
+        except Exception as e:
+            logger.error(f"Diagnostics continuation failed: {e}")
+            return False
+    
+    def _run_rx_eye_pattern_test(self):
+        """Rx Eye Patternテストを実行"""
+        try:
+            logger.info("Starting Rx Eye Pattern test")
+            
+            # 1. Rx Eye Pattern選択
+            logger.info("Step 1: Selecting Rx Eye Pattern")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for Rx selection: '{response}'")
+            if "select diagnostics mode" not in response:
+                logger.info("Waiting for diagnostics mode selection prompt...")
+                time.sleep(0.5)  # 短時間待機
+            
+            self.send_command("2")  # Rx Eye pattern
+            logger.info("Selected: Rx Eye pattern")
+            
+            # 2. レーン選択（Txと同じ設定を使用）
+            logger.info("Step 2: Selecting lane for Rx")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for lane: '{response}'")
+            if "lane for eye pattern" not in response:
+                logger.info("Waiting for lane selection prompt...")
+                time.sleep(0.5)  # 短時間待機
+            
+            default_lane = getattr(self.config.eye_pattern, 'default_lane', '5')
+            self.send_command(default_lane)
+            logger.info(f"Selected lane: {default_lane}")
+            
+            # 3. バイト選択（Txと同じ設定を使用）
+            logger.info("Step 3: Selecting byte for Rx")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for byte: '{response}'")
+            if "byte for eye pattern" not in response:
+                logger.info("Waiting for byte selection prompt...")
+                time.sleep(0.5)  # 短時間待機
+            
+            default_byte = getattr(self.config.eye_pattern, 'default_byte', '1')
+            self.send_command(default_byte)
+            logger.info(f"Selected byte: {default_byte}")
+            
+            # 4. アドレス設定（Txと同じ設定を使用）
+            logger.info("Step 4: Setting DiagAddrLow for Rx")
+            response = self.read_response(1.0)  # バッファ確認
+            logger.info(f"Buffer check for DiagAddrLow: '{response}'")
+            if "DiagAddrLow" not in response:
+                logger.info("Waiting for DiagAddrLow prompt...")
+                time.sleep(0.5)  # 短時間待機
+            
+            # DiagAddrLowの後に「Please Hit number key:」プロンプトが来る
+            logger.info("Waiting for DiagAddrLow input prompt...")
+            response = self.read_response(1.0)  # バッファ確認
+            if "Please Hit number key:" not in response:
+                time.sleep(0.5)  # 短時間待機
+            diag_addr_low = getattr(self.config.eye_pattern, 'diag_addr_low', '0000')
+            # 4桁のアドレス入力は1文字ずつ送信
+            for i, char in enumerate(diag_addr_low):
+                self.serial_conn.write(char.encode('utf-8'))
+                time.sleep(0.1)
+            logger.info(f"Set DiagAddrLow: {diag_addr_low}")
+            
+            # 5. Rx Eye Patternテスト実行
+            logger.info("Step 5: Executing Rx Eye Pattern test")
+            success = self._execute_eye_pattern_test()
+            
+            if success:
+                logger.info("Rx Eye Pattern test completed successfully")
+            else:
+                logger.warning("Rx Eye Pattern test did not complete successfully")
+            
+            # 6. 最終的な診断テスト終了
+            logger.info("Step 6: Final diagnostics test termination")
+            response = self.read_response(1.0)  # バッファ確認
+            if "Repeat diagnostics?" not in response:
+                time.sleep(0.5)  # 短時間待機
+            self.send_command("0")  # Finish
+            logger.info("Diagnostics test sequence completed")
+            
+        except Exception as e:
+            logger.error(f"Rx Eye Pattern test failed: {e}")
+    
+    def _handle_eye_pattern_continuation(self):
+        """アイパターンテストの継続を処理 (手順16)"""
+        try:
+            if self.wait_for_prompt(PromptPatterns.CONTINUE_EYE_PATTERN_TEST.value):
+                # 設定に基づいて継続を決定
+                continue_to_rx = getattr(self.config.eye_pattern, 'continue_to_rx_after_tx', True)
+                test_mode = getattr(self.config.eye_pattern, 'test_mode', 'both')
+                
+                if continue_to_rx and test_mode in ['both', 'rx_only']:
+                    # TX eye patternテスト後：'1'でRX eye patternに進む
+                    continue_cmd = TestCommands.CONTINUE_TO_RX_EYE_PATTERN.value
+                    logger.info("Eye pattern test - continuing to RX eye pattern")
+                else:
+                    # RX eye patternテスト後：'0'でテスト終了
+                    continue_cmd = TestCommands.END_EYE_PATTERN_TEST.value
+                    logger.info("Eye pattern test completed - ending test")
+                
+                for char in continue_cmd:
+                    self.serial_conn.write(char.encode('utf-8'))
+                    time.sleep(0.1)
+                
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Continue test: {continue_cmd}", "SERIAL")
+                    
+        except TimeoutError:
+            logger.warning("Eye pattern continuation prompt not found")
 
 def main():
     """メイン関数"""

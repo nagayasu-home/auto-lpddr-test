@@ -12,7 +12,7 @@ serial:
 # テスト設定
 test:
   # テストする周波数（MHz）
-  frequencies: [800]
+  frequencies: [800, 666]
   
   # テストパターン
   patterns:
@@ -33,24 +33,14 @@ test:
   test_bytes: 2147483648
   
   # 2Dトレーニング設定
-  enable_2d_training: true  # 2Dトレーニングを有効化
+  enable_2d_training: false
   
   # アイパターンテスト設定
-  enable_eye_pattern: true  # アイパターンテストを有効化
+  enable_eye_pattern: true
   eye_pattern:
     lanes: 4  # テストするレーン数
     bits: 8   # テストするビット数
     timeout: 30.0  # テストタイムアウト（秒）
-    # アイパターンテスト用の詳細設定
-    default_lane: "5"  # TeraTerm例で使用されたレーン
-    default_byte: "1"  # TeraTerm例で使用されたバイト
-    diag_addr_low: "0000"  # TeraTerm例で使用されたアドレス
-    # テスト継続設定
-    continue_to_rx_after_tx: true  # TX後にRX eye patternも実行
-    test_mode: "both"  # "tx_only", "rx_only", "both"
-    # 診断テスト設定
-    enable_diagnostics: true  # 診断テストを有効化
-    diagnostics_mode: "tx_eye_pattern"  # "simple_write_read", "tx_eye_pattern", "rx_eye_pattern"
 
 # 電源制御設定
 power_control:

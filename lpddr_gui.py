@@ -65,7 +65,7 @@ class LPDDRTestGUI:
         # UI変数
         self.port_var = tk.StringVar(value="/dev/ttyUSB0")
         self.baudrate_var = tk.StringVar(value="115200")
-        self.freq_var = tk.StringVar(value="800,666")
+        self.freq_var = tk.StringVar(value="800")
         self.pattern_var = tk.StringVar(value="1,15")
         self.progress_var = tk.DoubleVar()
         self.status_var = tk.StringVar(value="待機中")
@@ -458,15 +458,33 @@ class LPDDRTestGUI:
             self.test_start_time = time.time()
             
             # 設定を取得
+            from lpddr_test_automation import EyePatternConfig
+            eye_pattern_config = getattr(self, 'eye_pattern_config', {})
+            eye_pattern = EyePatternConfig(
+                default_lane=eye_pattern_config.get('default_lane', '5'),
+                default_byte=eye_pattern_config.get('default_byte', '1'),
+                diag_addr_low=eye_pattern_config.get('diag_addr_low', '0000'),
+                continue_to_rx_after_tx=eye_pattern_config.get('continue_to_rx_after_tx', False),
+                test_mode=eye_pattern_config.get('test_mode', 'tx_only'),
+                diagnostics_mode=eye_pattern_config.get('diagnostics_mode', 'tx_eye_pattern')
+            )
+            
             config = TestConfig(
                 port=self.port_var.get(),
                 baudrate=int(self.baudrate_var.get()),
-                timeout=30.0
+                timeout=30.0,
+                enable_2d_training=getattr(self, 'enable_2d_training', False),
+                enable_eye_pattern=getattr(self, 'enable_eye_pattern', False),
+                eye_pattern=eye_pattern
             )
             
             # 周波数とパターンを解析
-            frequencies = [int(f.strip()) for f in self.freq_var.get().split(',')]
+            freq_str = self.freq_var.get()
+            print(f"DEBUG: freq_var.get() = '{freq_str}'")  # デバッグ用
+            frequencies = [int(f.strip()) for f in freq_str.split(',')]
             patterns = [int(p.strip()) for p in self.pattern_var.get().split(',')]
+            print(f"DEBUG: frequencies = {frequencies}")  # デバッグ用
+            print(f"DEBUG: patterns = {patterns}")  # デバッグ用
             
             # テスト進行状況の初期化
             self.total_steps = len(frequencies) * len(patterns) + 1  # +1 for diagnostics
@@ -710,8 +728,9 @@ class LPDDRTestGUI:
                 self.baudrate_var.set(str(config.get('serial', {}).get('baudrate', 115200)))
                 
                 test_config = config.get('test', {})
-                frequencies = test_config.get('frequencies', [800, 666])
+                frequencies = test_config.get('frequencies', [800])
                 patterns_config = test_config.get('patterns', [1, 15])
+                print(f"DEBUG: config.yaml frequencies = {frequencies}")  # デバッグ用
                 
                 # patternsが辞書のリストの場合はidを抽出
                 if isinstance(patterns_config, list) and patterns_config and isinstance(patterns_config[0], dict):
@@ -719,12 +738,29 @@ class LPDDRTestGUI:
                 else:
                     patterns = patterns_config
                 
-                self.freq_var.set(','.join(map(str, frequencies)))
+                freq_str = ','.join(map(str, frequencies))
+                print(f"DEBUG: Setting freq_var to '{freq_str}' from config.yaml")  # デバッグ用
+                self.freq_var.set(freq_str)
                 self.pattern_var.set(','.join(map(str, patterns)))
                 
                 # 診断テスト設定を読み込み
                 judgment_config = config.get('judgment', {})
                 self.require_diagnostics = judgment_config.get('require_diagnostics', True)
+                
+                # 2Dトレーニングとアイパターンテスト設定を読み込み
+                self.enable_2d_training = test_config.get('enable_2d_training', False)
+                self.enable_eye_pattern = test_config.get('enable_eye_pattern', False)
+                
+                # アイパターンテストの詳細設定を読み込み
+                eye_pattern_config = test_config.get('eye_pattern', {})
+                self.eye_pattern_config = {
+                    'default_lane': eye_pattern_config.get('default_lane', '5'),
+                    'default_byte': eye_pattern_config.get('default_byte', '1'),
+                    'diag_addr_low': eye_pattern_config.get('diag_addr_low', '0000'),
+                    'continue_to_rx_after_tx': eye_pattern_config.get('continue_to_rx_after_tx', False),
+                    'test_mode': eye_pattern_config.get('test_mode', 'tx_only'),
+                    'diagnostics_mode': eye_pattern_config.get('diagnostics_mode', 'tx_eye_pattern')
+                }
                 
                 self.log_message(f"デフォルト設定を読み込みました: {default_config_path}", "SUCCESS")
             else:
@@ -734,7 +770,7 @@ class LPDDRTestGUI:
                 self.port_var.set('/dev/ttyUSB0')
                 self.require_diagnostics = True  # デフォルトは診断テストを実行
                 self.baudrate_var.set('115200')
-                self.freq_var.set('800,666')
+                self.freq_var.set('800')
                 self.pattern_var.set('1,15')
                 
         except Exception as e:
@@ -742,7 +778,7 @@ class LPDDRTestGUI:
             # フォールバック値
             self.port_var.set('/dev/ttyUSB0')
             self.baudrate_var.set('115200')
-            self.freq_var.set('800,666')
+            self.freq_var.set('800')
             self.pattern_var.set('1,15')
     
     def export_results(self):
@@ -775,13 +811,40 @@ class LPDDRTestGUI:
             messagebox.showwarning("警告", "可視化機能が利用できません")
             return
         
-        if not self.automation or not self.automation.test_results:
-            messagebox.showwarning("警告", "可視化する結果がありません")
+        if not self.automation:
+            messagebox.showwarning("警告", "テストが実行されていません")
+            return
+        
+        # テスト結果の確認（複数の形式に対応）
+        test_results = []
+        eye_pattern_results = {}
+        
+        # 1. 通常のテスト結果を確認
+        if hasattr(self.automation, 'test_results') and self.automation.test_results:
+            test_results = self.automation.test_results
+        
+        # 2. Eye Patternテスト結果を確認
+        if hasattr(self.automation, 'eye_pattern_results') and self.automation.eye_pattern_results:
+            eye_pattern_results = self.automation.eye_pattern_results
+        
+        # 3. 結果データが存在しない場合の処理
+        if not test_results and not eye_pattern_results:
+            messagebox.showwarning("警告", "可視化する結果がありません。\nテストを実行してから可視化してください。")
             return
         
         try:
-            self.visualizer.plot_test_results(self.automation.test_results)
+            # ビジュアライザーにEye Pattern結果を設定
+            if eye_pattern_results:
+                self.visualizer.eye_pattern_results = eye_pattern_results
+            
+            # 可視化を実行
+            result_file = self.visualizer.plot_test_results(test_results)
             self.log_message("結果可視化を表示しました", "SUCCESS")
+            
+            # 結果ファイルの情報を表示
+            if result_file:
+                self.log_message(f"可視化結果を保存しました: {result_file}", "INFO")
+            
         except Exception as e:
             self.log_message(f"可視化表示に失敗しました: {e}", "ERROR")
             messagebox.showerror("エラー", f"可視化表示に失敗しました: {e}")
@@ -1016,10 +1079,24 @@ Note: Commands are executed in the main GUI context.
             return
             
         try:
+            from lpddr_test_automation import EyePatternConfig
+            eye_pattern_config = getattr(self, 'eye_pattern_config', {})
+            eye_pattern = EyePatternConfig(
+                default_lane=eye_pattern_config.get('default_lane', '5'),
+                default_byte=eye_pattern_config.get('default_byte', '1'),
+                diag_addr_low=eye_pattern_config.get('diag_addr_low', '0000'),
+                continue_to_rx_after_tx=eye_pattern_config.get('continue_to_rx_after_tx', False),
+                test_mode=eye_pattern_config.get('test_mode', 'tx_only'),
+                diagnostics_mode=eye_pattern_config.get('diagnostics_mode', 'tx_eye_pattern')
+            )
+            
             config = TestConfig(
                 port=self.port_var.get(),
                 baudrate=int(self.baudrate_var.get()),
-                timeout=30.0
+                timeout=30.0,
+                enable_2d_training=getattr(self, 'enable_2d_training', False),
+                enable_eye_pattern=getattr(self, 'enable_eye_pattern', False),
+                eye_pattern=eye_pattern
             )
             
             frequencies = [frequency]
@@ -1160,10 +1237,24 @@ Note: Commands are executed in the main GUI context.
         
         def connection_thread():
             try:
+                from lpddr_test_automation import EyePatternConfig
+                eye_pattern_config = getattr(self, 'eye_pattern_config', {})
+                eye_pattern = EyePatternConfig(
+                    default_lane=eye_pattern_config.get('default_lane', '5'),
+                    default_byte=eye_pattern_config.get('default_byte', '1'),
+                    diag_addr_low=eye_pattern_config.get('diag_addr_low', '0000'),
+                    continue_to_rx_after_tx=eye_pattern_config.get('continue_to_rx_after_tx', False),
+                    test_mode=eye_pattern_config.get('test_mode', 'tx_only'),
+                    diagnostics_mode=eye_pattern_config.get('diagnostics_mode', 'tx_eye_pattern')
+                )
+                
                 config = TestConfig(
                     port=self.port_var.get(),
                     baudrate=int(self.baudrate_var.get()),
-                    timeout=30.0
+                    timeout=30.0,
+                    enable_2d_training=getattr(self, 'enable_2d_training', False),
+                    enable_eye_pattern=getattr(self, 'enable_eye_pattern', False),
+                    eye_pattern=eye_pattern
                 )
                 
                 self.automation = LPDDRAutomation(config, gui_callback=self.log_message, gui_status_callback=self.update_current_test_display)

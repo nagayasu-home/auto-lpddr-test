@@ -133,7 +133,10 @@ class LPDDRVisualizer:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"eye_pattern_results_{timestamp}.png"
             filepath = os.path.join(self.output_dir, filename)
+            print(f"DEBUG: Saving eye pattern visualization to: {filepath}")  # デバッグ用
+            print(f"DEBUG: Output directory exists: {os.path.exists(self.output_dir)}")  # デバッグ用
             plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"DEBUG: File saved successfully: {os.path.exists(filepath)}")  # デバッグ用
             logger.info(f"Eye pattern visualization saved to: {filepath}")
         
         if show_plot:
@@ -231,7 +234,9 @@ class LPDDRVisualizer:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"test_timeline_{timestamp}.png"
             filepath = os.path.join(self.output_dir, filename)
+            print(f"DEBUG: Saving timeline visualization to: {filepath}")  # デバッグ用
             plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"DEBUG: Timeline file saved successfully: {os.path.exists(filepath)}")  # デバッグ用
             logger.info(f"Test timeline visualization saved to: {filepath}")
         
         if show_plot:
@@ -398,9 +403,14 @@ class LPDDRVisualizer:
             total_count = len(test_results)
             
             report.append(f"Total Tests: {total_count}")
-            report.append(f"PASS: {pass_count} ({pass_count/total_count*100:.1f}%)")
-            report.append(f"FAIL: {fail_count} ({fail_count/total_count*100:.1f}%)")
-            report.append(f"UNKNOWN: {unknown_count} ({unknown_count/total_count*100:.1f}%)")
+            if total_count > 0:
+                report.append(f"PASS: {pass_count} ({pass_count/total_count*100:.1f}%)")
+                report.append(f"FAIL: {fail_count} ({fail_count/total_count*100:.1f}%)")
+                report.append(f"UNKNOWN: {unknown_count} ({unknown_count/total_count*100:.1f}%)")
+            else:
+                report.append("PASS: 0 (0.0%)")
+                report.append("FAIL: 0 (0.0%)")
+                report.append("UNKNOWN: 0 (0.0%)")
             report.append("")
             
             # ステップ別サマリー
@@ -437,8 +447,10 @@ class LPDDRVisualizer:
             tx_pass = sum(1 for r in tx_results if 'PASS' in r.upper())
             rx_pass = sum(1 for r in rx_results if 'PASS' in r.upper())
             
-            report.append(f"TX Eye Pattern Tests: {tx_pass}/{len(tx_results)} ({tx_pass/len(tx_results)*100:.1f}%)")
-            report.append(f"RX Eye Pattern Tests: {rx_pass}/{len(rx_results)} ({rx_pass/len(rx_results)*100:.1f}%)")
+            tx_rate = tx_pass/len(tx_results)*100 if len(tx_results) > 0 else 0
+            rx_rate = rx_pass/len(rx_results)*100 if len(rx_results) > 0 else 0
+            report.append(f"TX Eye Pattern Tests: {tx_pass}/{len(tx_results)} ({tx_rate:.1f}%)")
+            report.append(f"RX Eye Pattern Tests: {rx_pass}/{len(rx_results)} ({rx_rate:.1f}%)")
             report.append("")
         
         # 推奨事項
@@ -518,6 +530,215 @@ class LPDDRVisualizer:
         
         logger.info(f"Exported {len(exported_files)} visualization files")
         return exported_files
+    
+    def plot_test_results(self, test_results: List[Any], 
+                         save_plot: bool = True, show_plot: bool = False) -> str:
+        """
+        テスト結果の統合可視化（README.mdの設計意図に基づく）
+        
+        Args:
+            test_results (List[Any]): テスト結果リスト
+            save_plot (bool): プロットを保存するか
+            show_plot (bool): プロットを表示するか
+            
+        Returns:
+            str: 保存されたファイルパス
+        """
+        logger.info("Creating comprehensive test results visualization")
+        
+        try:
+            # 1. アイパターン結果の可視化
+            if hasattr(self, 'eye_pattern_results') and self.eye_pattern_results:
+                eye_pattern_file = self.visualize_eye_pattern_results(
+                    self.eye_pattern_results, 
+                    save_plot=True, 
+                    show_plot=False
+                )
+                logger.info(f"Eye pattern visualization saved: {eye_pattern_file}")
+            
+            # 2. テストタイムラインの可視化
+            timeline_file = self.visualize_test_timeline(
+                test_results, 
+                save_plot=True, 
+                show_plot=False
+            )
+            logger.info(f"Timeline visualization saved: {timeline_file}")
+            
+            # 3. インタラクティブダッシュボードの生成
+            dashboard_file = self.create_interactive_dashboard(
+                test_results, 
+                getattr(self, 'eye_pattern_results', {}),
+                save_html=True
+            )
+            logger.info(f"Interactive dashboard saved: {dashboard_file}")
+            
+            # 4. サマリーレポートの生成
+            report_file = self.generate_summary_report(
+                test_results, 
+                getattr(self, 'eye_pattern_results', {})
+            )
+            logger.info(f"Summary report saved: {report_file}")
+            
+            # 5. 統合結果の表示
+            if show_plot:
+                # メインの統合プロットを作成
+                fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+                
+                # サブプロット1: テスト結果サマリー
+                self._plot_test_summary(ax1, test_results)
+                
+                # サブプロット2: 周波数別結果
+                self._plot_frequency_results(ax2, test_results)
+                
+                # サブプロット3: パターン別結果
+                self._plot_pattern_results(ax3, test_results)
+                
+                # サブプロット4: 統計情報
+                self._plot_statistics(ax4, test_results)
+                
+                plt.suptitle('LPDDR Test Results - Comprehensive Analysis', 
+                           fontsize=16, fontweight='bold')
+                plt.tight_layout()
+                
+                if save_plot:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"comprehensive_test_results_{timestamp}.png"
+                    filepath = os.path.join(self.output_dir, filename)
+                    plt.savefig(filepath, dpi=300, bbox_inches='tight')
+                    logger.info(f"Comprehensive visualization saved: {filepath}")
+                    return filepath
+                else:
+                    plt.show()
+                    return ""
+            
+            return dashboard_file  # メインの出力としてダッシュボードを返す
+            
+        except Exception as e:
+            logger.error(f"Failed to create comprehensive visualization: {e}")
+            raise
+    
+    def _plot_test_summary(self, ax, test_results: List[Any]):
+        """テスト結果サマリーのプロット"""
+        try:
+            # 結果の集計
+            pass_count = sum(1 for result in test_results if hasattr(result, 'result') and result.result == 'PASS')
+            fail_count = sum(1 for result in test_results if hasattr(result, 'result') and result.result == 'FAIL')
+            unknown_count = len(test_results) - pass_count - fail_count
+            
+            labels = ['PASS', 'FAIL', 'UNKNOWN']
+            sizes = [pass_count, fail_count, unknown_count]
+            colors = ['#2ecc71', '#e74c3c', '#f39c12']
+            
+            ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+            ax.set_title('Test Results Summary', fontweight='bold')
+            
+        except Exception as e:
+            logger.warning(f"Failed to plot test summary: {e}")
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+    
+    def _plot_frequency_results(self, ax, test_results: List[Any]):
+        """周波数別結果のプロット"""
+        try:
+            frequencies = {}
+            for result in test_results:
+                if hasattr(result, 'frequency'):
+                    freq = result.frequency
+                    if freq not in frequencies:
+                        frequencies[freq] = {'PASS': 0, 'FAIL': 0, 'UNKNOWN': 0}
+                    status = getattr(result, 'result', 'UNKNOWN')
+                    frequencies[freq][status] += 1
+            
+            if frequencies:
+                freq_labels = list(frequencies.keys())
+                pass_counts = [frequencies[f]['PASS'] for f in freq_labels]
+                fail_counts = [frequencies[f]['FAIL'] for f in freq_labels]
+                
+                x = range(len(freq_labels))
+                width = 0.35
+                
+                ax.bar([i - width/2 for i in x], pass_counts, width, label='PASS', color='#2ecc71')
+                ax.bar([i + width/2 for i in x], fail_counts, width, label='FAIL', color='#e74c3c')
+                
+                ax.set_xlabel('Frequency (MHz)')
+                ax.set_ylabel('Test Count')
+                ax.set_title('Results by Frequency', fontweight='bold')
+                ax.set_xticks(x)
+                ax.set_xticklabels(freq_labels)
+                ax.legend()
+            else:
+                ax.text(0.5, 0.5, 'No frequency data available', ha='center', va='center', transform=ax.transAxes)
+                
+        except Exception as e:
+            logger.warning(f"Failed to plot frequency results: {e}")
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+    
+    def _plot_pattern_results(self, ax, test_results: List[Any]):
+        """パターン別結果のプロット"""
+        try:
+            patterns = {}
+            for result in test_results:
+                if hasattr(result, 'pattern'):
+                    pattern = result.pattern
+                    if pattern not in patterns:
+                        patterns[pattern] = {'PASS': 0, 'FAIL': 0, 'UNKNOWN': 0}
+                    status = getattr(result, 'result', 'UNKNOWN')
+                    patterns[pattern][status] += 1
+            
+            if patterns:
+                pattern_labels = [f"Pattern {p}" for p in patterns.keys()]
+                pass_counts = [patterns[p]['PASS'] for p in patterns.keys()]
+                fail_counts = [patterns[p]['FAIL'] for p in patterns.keys()]
+                
+                x = range(len(pattern_labels))
+                width = 0.35
+                
+                ax.bar([i - width/2 for i in x], pass_counts, width, label='PASS', color='#2ecc71')
+                ax.bar([i + width/2 for i in x], fail_counts, width, label='FAIL', color='#e74c3c')
+                
+                ax.set_xlabel('Test Pattern')
+                ax.set_ylabel('Test Count')
+                ax.set_title('Results by Pattern', fontweight='bold')
+                ax.set_xticks(x)
+                ax.set_xticklabels(pattern_labels)
+                ax.legend()
+            else:
+                ax.text(0.5, 0.5, 'No pattern data available', ha='center', va='center', transform=ax.transAxes)
+                
+        except Exception as e:
+            logger.warning(f"Failed to plot pattern results: {e}")
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+    
+    def _plot_statistics(self, ax, test_results: List[Any]):
+        """統計情報のプロット"""
+        try:
+            # 基本的な統計情報を表示
+            total_tests = len(test_results)
+            if total_tests == 0:
+                ax.text(0.5, 0.5, 'No test results available', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Test Statistics', fontweight='bold')
+                ax.axis('off')
+                return
+                
+            pass_count = sum(1 for result in test_results if hasattr(result, 'result') and result.result == 'PASS')
+            fail_count = sum(1 for result in test_results if hasattr(result, 'result') and result.result == 'FAIL')
+            pass_rate = (pass_count / total_tests * 100) if total_tests > 0 else 0
+            
+            stats_text = f"""
+            Total Tests: {total_tests}
+            PASS: {pass_count} ({pass_rate:.1f}%)
+            FAIL: {fail_count}
+            
+            Success Rate: {pass_rate:.1f}%
+            """
+            
+            ax.text(0.1, 0.5, stats_text, transform=ax.transAxes, fontsize=12,
+                   verticalalignment='center', bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue"))
+            ax.set_title('Test Statistics', fontweight='bold')
+            ax.axis('off')
+            
+        except Exception as e:
+            logger.warning(f"Failed to plot statistics: {e}")
+            ax.text(0.5, 0.5, 'No statistics available', ha='center', va='center', transform=ax.transAxes)
 
 
 def create_visualizer(output_dir: str = "visualization_output") -> LPDDRVisualizer:

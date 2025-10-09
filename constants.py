@@ -105,6 +105,13 @@ class PromptPatterns(Enum):
     REPEAT_DIAGNOSTICS = r"Repeat diagnostics"
     SELECT_LANE = r"Selectlane"
     SELECT_BIT = r"Selectbit"
+    
+    # アイパターンテスト関連
+    SET_LANE = r"Set \"lane\""
+    SET_BYTE = r"Set \"byte\""
+    SET_DIAG_ADDR_LOW_EYE = r"Set \"DiagAddrLow\""
+    EYE_PATTERN_RESULTS = r"Eye Pattern test results"
+    CONTINUE_EYE_PATTERN_TEST = r"continue the test"
 
 
 class TestCommands(Enum):
@@ -125,6 +132,10 @@ class TestCommands(Enum):
     # リピート選択
     END_TEST = "0"
     REPEAT_TEST = "1"
+    
+    # アイパターンテスト継続選択
+    CONTINUE_TO_RX_EYE_PATTERN = "1"  # TX eye pattern後、RX eye patternに進む
+    END_EYE_PATTERN_TEST = "0"        # RX eye pattern後、テスト終了
 
 
 class DiagnosticSettings(Enum):

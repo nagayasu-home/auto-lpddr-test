@@ -78,7 +78,7 @@ CONFIGURATION:
   config port <port>             - Set serial port (e.g., /dev/ttyUSB0)
   config baudrate <rate>         - Set baudrate (9600, 19200, 38400, 57600, 115200)
   config timeout <seconds>       - Set timeout in seconds
-  config frequencies <freqs>     - Set test frequencies (e.g., 800,666)
+  config frequencies <freqs>     - Set test frequencies (e.g., 800)
   config patterns <patterns>     - Set test patterns (e.g., 1,15)
   config 2d <on|off>             - Enable/disable 2D training
   config eye <on|off>            - Enable/disable eye pattern test
@@ -110,7 +110,7 @@ UTILITY:
 
 Examples:
   config port /dev/ttyUSB0
-  config frequencies 800,666
+  config frequencies 800
   connect
   test
   log 50
@@ -382,7 +382,7 @@ Examples:
         def test_thread():
             try:
                 # デフォルト周波数でテスト
-                frequencies = [800, 666]
+                frequencies = [800]
                 
                 for frequency in frequencies:
                     if not self.is_test_running:
