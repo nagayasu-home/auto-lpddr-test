@@ -1214,13 +1214,29 @@ class LPDDRAutomation:
                             if line.strip():
                                 self.gui_callback(line.strip(), "SERIAL")
                     
-                    # テスト完了の確認（TeraTermログに基づく修正）
-                    if "#### Finish Diagnostics test" in response_buffer:
+                    # デバッグ用：受信データをログ出力
+                    if decoded_data.strip():
+                        logger.debug(f"Eye pattern test - received data: '{decoded_data.strip()}'")
+                        logger.debug(f"Eye pattern test - buffer length: {len(response_buffer)}")
+                    
+                    # テスト完了の確認（複数のパターンをチェック）
+                    completion_patterns = [
+                        "#### Finish Diagnostics test",
+                        "Eye Pattern Test completed successfully",
+                        "Diagnostics test finished successfully",
+                        "Eye pattern test completed"
+                    ]
+                    
+                    test_completed = any(pattern in response_buffer for pattern in completion_patterns)
+                    
+                    if test_completed:
                         logger.info("Eye pattern test completed successfully")
                         # 結果を保存
                         if response_buffer:
                             self.eye_pattern_results[f"eye_pattern_test_{int(time.time())}"] = response_buffer
                             # 詳細解析を実行
+                            logger.info("Starting detailed eye pattern analysis...")
+                            logger.info(f"Raw data for analysis: {response_buffer[:200]}...")
                             self._analyze_eye_pattern_results(response_buffer)
                         return True
                         
@@ -1228,6 +1244,12 @@ class LPDDRAutomation:
             
             # タイムアウトの場合
             logger.warning("Eye pattern test timeout - no completion message received")
+            logger.warning(f"Received data during timeout: '{response_buffer[:500]}...'")
+            # タイムアウトでも生データがあれば解析を試行
+            if response_buffer.strip():
+                logger.info("Attempting analysis with timeout data...")
+                self.eye_pattern_results[f"eye_pattern_test_timeout_{int(time.time())}"] = response_buffer
+                self._analyze_eye_pattern_results(response_buffer)
             return False
                 
         except Exception as e:
@@ -1448,6 +1470,12 @@ class LPDDRAutomation:
             if success:
                 log_to_gui("Rx Eye Pattern Test completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
                 logger.info("Rx Eye Pattern test completed successfully")
+                
+                # Rxテストの詳細解析結果をログ出力
+                if self.detailed_eye_pattern_results:
+                    latest_result = self.detailed_eye_pattern_results[-1]
+                    if latest_result.pattern_type == "rx":
+                        logger.info("Rx Eye Pattern detailed analysis completed - check logs for signal quality details")
             else:
                 log_to_gui("Rx Eye Pattern Test failed - Test Result: FAIL", "ERROR", self.gui_callback)
                 logger.warning("Rx Eye Pattern test did not complete successfully")
@@ -1495,38 +1523,70 @@ class LPDDRAutomation:
     def _analyze_eye_pattern_results(self, raw_data: str):
         """Eye Patternテスト結果の詳細解析"""
         try:
+            print("=== Starting Eye Pattern Analysis ===")  # デバッグ用print
+            logger.info("=== Starting Eye Pattern Analysis ===")
+            print(f"Raw data length: {len(raw_data)}")  # デバッグ用print
+            logger.info(f"Raw data length: {len(raw_data)}")
+            print(f"Raw data preview: {raw_data[:100]}...")  # デバッグ用print
+            logger.info(f"Raw data preview: {raw_data[:100]}...")
+            print("Analyzing eye pattern test results...")  # デバッグ用print
             logger.info("Analyzing eye pattern test results...")
             
             # 現在の設定からレーンとビット情報を取得
             current_lane = int(getattr(self.config.eye_pattern, 'default_lane', '5'))
             current_byte = int(getattr(self.config.eye_pattern, 'default_byte', '1'))
+            print(f"Current lane: {current_lane}, byte: {current_byte}")  # デバッグ用print
             
             # テスト結果の解析
             result_status = "PASS" if "successfully" in raw_data.lower() else "FAIL"
+            print(f"Result status: {result_status}")  # デバッグ用print
             
             # 信号品質の評価
+            print("Evaluating signal quality...")  # デバッグ用print
             quality_score = self._evaluate_signal_quality(raw_data)
+            print(f"Quality score: {quality_score}")  # デバッグ用print
             
             # タイミング情報の抽出
+            print("Extracting timing info...")  # デバッグ用print
             timing_info = self._extract_timing_info(raw_data)
+            print(f"Timing info: {timing_info}")  # デバッグ用print
             
-            # TX Eye Pattern結果の作成
-            tx_result = EyePatternResult(
+            # 詳細な信号品質解析
+            print("Analyzing signal quality in detail...")  # デバッグ用print
+            signal_analysis = self._analyze_signal_quality_detailed(raw_data)
+            print(f"Signal analysis completed: {len(signal_analysis)} items")  # デバッグ用print
+            
+            # パターンタイプの判定（Tx/Rx）
+            print("Determining pattern type...")  # デバッグ用print
+            pattern_type = self._determine_pattern_type(raw_data)
+            print(f"Pattern type: {pattern_type}")  # デバッグ用print
+            
+            # Eye Pattern結果の作成
+            print("Creating EyePatternResult...")  # デバッグ用print
+            eye_pattern_result = EyePatternResult(
                 lane=current_lane,
                 bit=current_byte,
-                pattern_type="tx",
+                pattern_type=pattern_type,
                 result=result_status,
                 timing=timing_info,
                 quality=quality_score,
                 timestamp=time.time(),
                 raw_data=raw_data
             )
-            self.detailed_eye_pattern_results.append(tx_result)
+            self.detailed_eye_pattern_results.append(eye_pattern_result)
+            print(f"Added to detailed_eye_pattern_results, total count: {len(self.detailed_eye_pattern_results)}")  # デバッグ用print
             
-            logger.info(f"TX Eye Pattern Result - Lane: {current_lane}, Bit: {current_byte}, Result: {result_status}, Quality: {quality_score:.2f}")
+            # 詳細なログ出力
+            print("Logging detailed analysis...")  # デバッグ用print
+            self._log_detailed_eye_pattern_analysis(eye_pattern_result, signal_analysis)
+            print("Detailed analysis logging completed")  # デバッグ用print
             
         except Exception as e:
+            print(f"ERROR in _analyze_eye_pattern_results: {e}")  # デバッグ用print
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")  # デバッグ用print
             logger.error(f"Failed to analyze eye pattern results: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
     
     def _evaluate_signal_quality(self, raw_data: str) -> float:
         """信号品質の詳細評価"""
@@ -1674,6 +1734,174 @@ class LPDDRAutomation:
             logger.error(f"Failed to extract timing info: {e}")
             return 0.0
     
+    def _analyze_signal_quality_detailed(self, raw_data: str) -> Dict[str, Any]:
+        """詳細な信号品質解析"""
+        try:
+            analysis = {
+                'signal_quality_above_threshold': False,
+                'timing_margin_sufficient': False,
+                'no_errors_detected': True,
+                'quality_score': 0.0,
+                'timing_value': 0.0,
+                'error_messages': [],
+                'success_indicators': [],
+                'threshold_analysis': {}
+            }
+            
+            # 1. 信号品質の閾値チェック
+            quality_score = self._evaluate_signal_quality(raw_data)
+            analysis['quality_score'] = quality_score
+            analysis['signal_quality_above_threshold'] = quality_score > 0.5
+            
+            # 2. タイミングマージンの十分性チェック
+            timing_info = self._extract_timing_info(raw_data)
+            analysis['timing_value'] = timing_info
+            analysis['timing_margin_sufficient'] = timing_info > 1.0  # 1ns以上を十分とする
+            
+            # 3. エラーメッセージの検出
+            error_indicators = ["error", "fail", "timeout", "invalid", "abort", "exception", 
+                              "threshold", "signal quality", "below threshold"]
+            for indicator in error_indicators:
+                if indicator in raw_data.lower():
+                    analysis['error_messages'].append(indicator)
+                    analysis['no_errors_detected'] = False
+            
+            # 4. 成功インジケーターの検出
+            success_indicators = ["successfully", "pass", "success", "complete", "ok", 
+                                "finished", "done", "quality", "timing"]
+            for indicator in success_indicators:
+                if indicator in raw_data.lower():
+                    analysis['success_indicators'].append(indicator)
+            
+            # 5. 閾値分析
+            analysis['threshold_analysis'] = {
+                'quality_threshold': 0.5,
+                'quality_actual': quality_score,
+                'quality_pass': quality_score > 0.5,
+                'timing_threshold': 1.0,
+                'timing_actual': timing_info,
+                'timing_pass': timing_info > 1.0
+            }
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze signal quality in detail: {e}")
+            return {}
+    
+    def _determine_pattern_type(self, raw_data: str) -> str:
+        """パターンタイプ（Tx/Rx）の判定"""
+        try:
+            raw_lower = raw_data.lower()
+            if "rx" in raw_lower or "receive" in raw_lower:
+                return "rx"
+            elif "tx" in raw_lower or "transmit" in raw_lower:
+                return "tx"
+            else:
+                # デフォルトはtx（既存の動作を維持）
+                return "tx"
+        except Exception as e:
+            logger.error(f"Failed to determine pattern type: {e}")
+            return "tx"
+    
+    def _log_detailed_eye_pattern_analysis(self, result: EyePatternResult, analysis: Dict[str, Any]):
+        """詳細なEye Pattern解析結果のログ出力"""
+        try:
+            print("=== _log_detailed_eye_pattern_analysis called ===")  # デバッグ用print
+            # 基本情報のログ出力
+            print("=" * 60)  # デバッグ用print
+            print(f"Eye Pattern Test Analysis - {result.pattern_type.upper()}")  # デバッグ用print
+            print("=" * 60)  # デバッグ用print
+            print(f"Lane: {result.lane}, Bit: {result.bit}")  # デバッグ用print
+            print(f"Result: {result.result}")  # デバッグ用print
+            print(f"Quality Score: {result.quality:.3f}")  # デバッグ用print
+            print(f"Timing: {result.timing:.2f} ns")  # デバッグ用print
+            
+            logger.info("=" * 60)
+            logger.info(f"Eye Pattern Test Analysis - {result.pattern_type.upper()}")
+            logger.info("=" * 60)
+            logger.info(f"Lane: {result.lane}, Bit: {result.bit}")
+            logger.info(f"Result: {result.result}")
+            logger.info(f"Quality Score: {result.quality:.3f}")
+            logger.info(f"Timing: {result.timing:.2f} ns")
+            
+            # 信号品質の詳細分析
+            print("\n--- Signal Quality Analysis ---")  # デバッグ用print
+            print(f"Signal Quality Above Threshold: {analysis.get('signal_quality_above_threshold', False)}")  # デバッグ用print
+            print(f"Quality Score: {analysis.get('quality_score', 0.0):.3f} (Threshold: 0.5)")  # デバッグ用print
+            logger.info("\n--- Signal Quality Analysis ---")
+            logger.info(f"Signal Quality Above Threshold: {analysis.get('signal_quality_above_threshold', False)}")
+            logger.info(f"Quality Score: {analysis.get('quality_score', 0.0):.3f} (Threshold: 0.5)")
+            
+            # タイミングマージンの分析
+            print("\n--- Timing Margin Analysis ---")  # デバッグ用print
+            print(f"Timing Margin Sufficient: {analysis.get('timing_margin_sufficient', False)}")  # デバッグ用print
+            print(f"Timing Value: {analysis.get('timing_value', 0.0):.2f} ns (Threshold: 1.0 ns)")  # デバッグ用print
+            logger.info("\n--- Timing Margin Analysis ---")
+            logger.info(f"Timing Margin Sufficient: {analysis.get('timing_margin_sufficient', False)}")
+            logger.info(f"Timing Value: {analysis.get('timing_value', 0.0):.2f} ns (Threshold: 1.0 ns)")
+            
+            # エラー検出の分析
+            print("\n--- Error Detection Analysis ---")  # デバッグ用print
+            print(f"No Errors Detected: {analysis.get('no_errors_detected', True)}")  # デバッグ用print
+            if analysis.get('error_messages'):
+                print(f"Error Messages Found: {', '.join(analysis['error_messages'])}")  # デバッグ用print
+            else:
+                print("No error messages detected")  # デバッグ用print
+            logger.info("\n--- Error Detection Analysis ---")
+            logger.info(f"No Errors Detected: {analysis.get('no_errors_detected', True)}")
+            if analysis.get('error_messages'):
+                logger.warning(f"Error Messages Found: {', '.join(analysis['error_messages'])}")
+            else:
+                logger.info("No error messages detected")
+            
+            # 成功インジケーターの分析
+            print("\n--- Success Indicators Analysis ---")  # デバッグ用print
+            if analysis.get('success_indicators'):
+                print(f"Success Indicators Found: {', '.join(analysis['success_indicators'])}")  # デバッグ用print
+            else:
+                print("No success indicators found")  # デバッグ用print
+            logger.info("\n--- Success Indicators Analysis ---")
+            if analysis.get('success_indicators'):
+                logger.info(f"Success Indicators Found: {', '.join(analysis['success_indicators'])}")
+            else:
+                logger.warning("No success indicators found")
+            
+            # 閾値分析の詳細
+            threshold_analysis = analysis.get('threshold_analysis', {})
+            print("\n--- Threshold Analysis ---")  # デバッグ用print
+            print(f"Quality: {threshold_analysis.get('quality_actual', 0.0):.3f} / {threshold_analysis.get('quality_threshold', 0.5)} ({'PASS' if threshold_analysis.get('quality_pass', False) else 'FAIL'})")  # デバッグ用print
+            print(f"Timing: {threshold_analysis.get('timing_actual', 0.0):.2f} / {threshold_analysis.get('timing_threshold', 1.0)} ns ({'PASS' if threshold_analysis.get('timing_pass', False) else 'FAIL'})")  # デバッグ用print
+            logger.info("\n--- Threshold Analysis ---")
+            logger.info(f"Quality: {threshold_analysis.get('quality_actual', 0.0):.3f} / {threshold_analysis.get('quality_threshold', 0.5)} ({'PASS' if threshold_analysis.get('quality_pass', False) else 'FAIL'})")
+            logger.info(f"Timing: {threshold_analysis.get('timing_actual', 0.0):.2f} / {threshold_analysis.get('timing_threshold', 1.0)} ns ({'PASS' if threshold_analysis.get('timing_pass', False) else 'FAIL'})")
+            
+            # 総合判定
+            print("\n--- Overall Assessment ---")  # デバッグ用print
+            overall_pass = (analysis.get('signal_quality_above_threshold', False) and 
+                          analysis.get('timing_margin_sufficient', False) and 
+                          analysis.get('no_errors_detected', True))
+            print(f"Overall Assessment: {'PASS' if overall_pass else 'FAIL'}")  # デバッグ用print
+            logger.info("\n--- Overall Assessment ---")
+            logger.info(f"Overall Assessment: {'PASS' if overall_pass else 'FAIL'}")
+            
+            # GUIへの詳細情報出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback(f"Eye Pattern Analysis - {result.pattern_type.upper()}: Quality={result.quality:.3f}, Timing={result.timing:.2f}ns, Result={result.result}", "INFO")
+                if not analysis.get('no_errors_detected', True):
+                    self.gui_callback(f"Errors detected: {', '.join(analysis.get('error_messages', []))}", "WARNING")
+            
+            print("=" * 60)  # デバッグ用print
+            logger.info("=" * 60)
+            print("=== _log_detailed_eye_pattern_analysis completed ===")  # デバッグ用print
+            
+        except Exception as e:
+            print(f"ERROR in _log_detailed_eye_pattern_analysis: {e}")  # デバッグ用print
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")  # デバッグ用print
+            logger.error(f"Failed to log detailed eye pattern analysis: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
     def get_eye_pattern_analysis_summary(self) -> Dict[str, Any]:
         """Eye Patternテスト結果の分析サマリーを取得"""
         try:
