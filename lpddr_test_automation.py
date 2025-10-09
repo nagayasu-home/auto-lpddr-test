@@ -582,17 +582,25 @@ class LPDDRAutomation:
             # アイパターンテスト完了後は、メモリテストをスキップ
             logger.info("Eye pattern test sequence completed, returning results")
             
-            # TxとRxの結果を別々のファイルに保存
+            # TxとRxの結果を別々のファイルに保存（シリアルログ出力を維持）
             try:
                 save_result = self.save_eye_pattern_results_to_files()
                 if save_result.get("error"):
                     logger.error(f"Failed to save eye pattern results: {save_result['error']}")
+                    # エラーもシリアルログに出力
+                    if hasattr(self, 'gui_callback') and self.gui_callback:
+                        self.gui_callback(f"Error saving eye pattern results: {save_result['error']}", "SERIAL")
                 else:
                     logger.info("Eye pattern results saved to separate files")
+                    # 成功メッセージをシリアルログにも出力
                     if hasattr(self, 'gui_callback') and self.gui_callback:
                         self.gui_callback("Eye pattern results saved to separate files", "INFO")
+                        self.gui_callback("=== File Save Completed ===", "SERIAL")
             except Exception as e:
                 logger.error(f"Error saving eye pattern results: {e}")
+                # 例外もシリアルログに出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback(f"Exception during file save: {e}", "SERIAL")
             
             # resultsをself.test_resultsに追加
             for key, result in results.items():
@@ -1295,17 +1303,24 @@ class LPDDRAutomation:
                     decoded_data = data.decode('utf-8', errors='ignore')
                     response_buffer += decoded_data
                     
-                    # シリアルログを出力
+                    # シリアルログを出力（Rxテストでも確実に出力されるように強化）
                     if hasattr(self, 'gui_callback') and self.gui_callback and decoded_data:
                         lines = decoded_data.split('\n')
                         for line in lines:
                             if line.strip():
-                                self.gui_callback(line.strip(), "SERIAL")
+                                # Rxテストの場合は特別にマークを付けて出力
+                                if self.current_eye_pattern_type == "rx":
+                                    self.gui_callback(f"[Rx] {line.strip()}", "SERIAL")
+                                else:
+                                    self.gui_callback(line.strip(), "SERIAL")
                     
                     # デバッグ用：受信データをログ出力
                     if decoded_data.strip():
                         logger.debug(f"Eye pattern test - received data: '{decoded_data.strip()}'")
                         logger.debug(f"Eye pattern test - buffer length: {len(response_buffer)}")
+                        # Rxテストの場合は特別にログ出力
+                        if self.current_eye_pattern_type == "rx":
+                            logger.info(f"Rx Eye Pattern - received data: '{decoded_data.strip()}'")
                     
                     # テスト完了の確認（複数のパターンをチェック）
                     completion_patterns = [
@@ -1414,11 +1429,20 @@ class LPDDRAutomation:
             
             # 5. アイパターンテスト実行と結果取得
             logger.info("Step 5: Executing eye pattern test")
+            
+            # TXテスト開始をシリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback("=== Tx Eye Pattern Test Started ===", "SERIAL")
+            
             success = self._execute_eye_pattern_test()
             
             if success:
                 log_to_gui("Tx Eye Pattern Test completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
                 logger.info("Tx Eye pattern test completed successfully")
+                
+                # TXテスト完了をシリアルログに出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback("=== Tx Eye Pattern Test Completed ===", "SERIAL")
                 
                 # Txテストの詳細解析結果をログ出力
                 if self.detailed_eye_pattern_results:
@@ -1447,6 +1471,10 @@ class LPDDRAutomation:
             else:
                 log_to_gui("Tx Eye Pattern Test failed - Test Result: FAIL", "ERROR", self.gui_callback)
                 logger.warning("Tx Eye pattern test did not complete successfully")
+                
+                # TXテスト失敗をシリアルログに出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback("=== Tx Eye Pattern Test Failed ===", "SERIAL")
             
         except Exception as e:
             log_to_gui(f"Eye Pattern Test failed with error: {e}", "ERROR", self.gui_callback)
@@ -1531,6 +1559,10 @@ class LPDDRAutomation:
             self.current_eye_pattern_type = "rx"  # 現在のテストタイプを設定
             logger.info("Selected: Rx Eye pattern")
             
+            # シリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback("2", "SERIAL")
+            
             # 2. レーン選択（Txと同じ設定を使用）
             logger.info("Step 2: Selecting lane for Rx")
             response = self.read_response(1.0)  # バッファ確認
@@ -1542,6 +1574,10 @@ class LPDDRAutomation:
             default_lane = getattr(self.config.eye_pattern, 'default_lane', '5')
             self.send_command(default_lane)
             logger.info(f"Selected lane: {default_lane}")
+            
+            # シリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback(default_lane, "SERIAL")
             
             # 3. バイト選択（Txと同じ設定を使用）
             logger.info("Step 3: Selecting byte for Rx")
@@ -1555,10 +1591,19 @@ class LPDDRAutomation:
             self.send_command(default_byte)
             logger.info(f"Selected byte: {default_byte}")
             
+            # シリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback(default_byte, "SERIAL")
+            
             # 4. アドレス設定（Txと同じ設定を使用）
             logger.info("Step 4: Setting DiagAddrLow for Rx")
             response = self.read_response(1.0)  # バッファ確認
             logger.info(f"Buffer check for DiagAddrLow: '{response}'")
+            
+            # レスポンスをシリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback and response:
+                self.gui_callback(response, "SERIAL")
+            
             if "DiagAddrLow" not in response:
                 logger.info("Waiting for DiagAddrLow prompt...")
                 time.sleep(0.5)  # 短時間待機
@@ -1575,13 +1620,26 @@ class LPDDRAutomation:
                 time.sleep(0.1)
             logger.info(f"Set DiagAddrLow: {diag_addr_low}")
             
+            # シリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback(diag_addr_low, "SERIAL")
+            
             # 5. Rx Eye Patternテスト実行
             logger.info("Step 5: Executing Rx Eye Pattern test")
+            
+            # Rxテスト開始をシリアルログに出力
+            if hasattr(self, 'gui_callback') and self.gui_callback:
+                self.gui_callback("=== Rx Eye Pattern Test Started ===", "SERIAL")
+            
             success = self._execute_eye_pattern_test()
             
             if success:
                 log_to_gui("Rx Eye Pattern Test completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
                 logger.info("Rx Eye Pattern test completed successfully")
+                
+                # Rxテスト完了をシリアルログに出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback("=== Rx Eye Pattern Test Completed ===", "SERIAL")
                 
                 # Rxテストの詳細解析結果をログ出力
                 if self.detailed_eye_pattern_results:
@@ -1606,6 +1664,10 @@ class LPDDRAutomation:
             else:
                 log_to_gui("Rx Eye Pattern Test failed - Test Result: FAIL", "ERROR", self.gui_callback)
                 logger.warning("Rx Eye Pattern test did not complete successfully")
+                
+                # Rxテスト失敗をシリアルログに出力
+                if hasattr(self, 'gui_callback') and self.gui_callback:
+                    self.gui_callback("=== Rx Eye Pattern Test Failed ===", "SERIAL")
             
             # 6. 最終的な診断テスト終了
             logger.info("Step 6: Final diagnostics test termination")

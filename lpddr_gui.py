@@ -187,8 +187,12 @@ class LPDDRTestGUI:
         )
         self.log_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # ログクリアボタン
-        ttk.Button(log_frame, text="ログクリア", command=self.clear_log).grid(row=1, column=0, pady=(5, 0))
+        # ログクリアボタンとダウンロードボタン
+        log_button_frame = ttk.Frame(log_frame)
+        log_button_frame.grid(row=1, column=0, pady=(5, 0))
+        
+        ttk.Button(log_button_frame, text="ログクリア", command=self.clear_log).grid(row=0, column=0, padx=(0, 5))
+        ttk.Button(log_button_frame, text="テストログ保存", command=self.export_test_log).grid(row=0, column=1)
         
         # シリアルログ表示フレーム（右側）
         result_frame = ttk.LabelFrame(content_frame, text="シリアルログ", padding="5")
@@ -203,8 +207,12 @@ class LPDDRTestGUI:
         )
         self.result_text.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
         
-        # シリアルログクリアボタン
-        ttk.Button(result_frame, text="シリアルログクリア", command=self.clear_results).grid(row=1, column=0, pady=(5, 0))
+        # シリアルログクリアボタンとダウンロードボタン
+        serial_button_frame = ttk.Frame(result_frame)
+        serial_button_frame.grid(row=1, column=0, pady=(5, 0))
+        
+        ttk.Button(serial_button_frame, text="シリアルログクリア", command=self.clear_results).grid(row=0, column=0, padx=(0, 5))
+        ttk.Button(serial_button_frame, text="シリアルログ保存", command=self.export_serial_log).grid(row=0, column=1)
         
         # グリッドの重み設定
         self.root.columnconfigure(0, weight=1)
@@ -804,6 +812,68 @@ class LPDDRTestGUI:
             except Exception as e:
                 self.log_message(f"結果エクスポートに失敗しました: {e}", "ERROR")
                 messagebox.showerror("エラー", f"結果エクスポートに失敗しました: {e}")
+
+    def _get_timestamp_filename(self, prefix):
+        """日時付きファイル名を生成"""
+        now = datetime.now()
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+        return f"{prefix}_{timestamp}.txt"
+
+    def export_test_log(self):
+        """テストログをエクスポート"""
+        log_content = self.log_text.get(1.0, tk.END).strip()
+        if not log_content:
+            messagebox.showwarning("警告", "エクスポートするテストログがありません")
+            return
+        
+        default_filename = self._get_timestamp_filename("testlog")
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialdir=os.getcwd(),
+            initialfile=default_filename,
+            title="テストログを保存"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(log_content)
+                
+                self.log_message(f"テストログをエクスポートしました: {filename}", "SUCCESS")
+                messagebox.showinfo("エクスポート完了", f"テストログを {filename} に保存しました")
+                
+            except Exception as e:
+                self.log_message(f"テストログエクスポートエラー: {e}", "ERROR")
+                messagebox.showerror("エクスポートエラー", f"ファイルの保存に失敗しました: {e}")
+
+    def export_serial_log(self):
+        """シリアルログをエクスポート"""
+        serial_content = self.result_text.get(1.0, tk.END).strip()
+        if not serial_content:
+            messagebox.showwarning("警告", "エクスポートするシリアルログがありません")
+            return
+        
+        default_filename = self._get_timestamp_filename("seriallog")
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialdir=os.getcwd(),
+            initialfile=default_filename,
+            title="シリアルログを保存"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(serial_content)
+                
+                self.log_message(f"シリアルログをエクスポートしました: {filename}", "SUCCESS")
+                messagebox.showinfo("エクスポート完了", f"シリアルログを {filename} に保存しました")
+                
+            except Exception as e:
+                self.log_message(f"シリアルログエクスポートエラー: {e}", "ERROR")
+                messagebox.showerror("エクスポートエラー", f"ファイルの保存に失敗しました: {e}")
     
     def show_visualizations(self):
         """結果可視化を表示"""
