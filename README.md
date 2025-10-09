@@ -9,6 +9,7 @@ AI-CAMKITメインボードのLPDDR4インタフェース検証を自動化す�
 - 結果判定と次ステップ決定
 - GUI インターフェース（オプション）
 - 設定ファイルによる柔軟な設定
+- **高度な可視化機能**（Eye Patternヒートマップ、統合ダッシュボード、テストタイムライン）
 
 ## インストール
 
@@ -552,13 +553,342 @@ copy config.yaml config.yaml.backup
 
 ### 使用方法
 
-#### GUI版
-1. テスト実行後、「結果可視化」ボタンをクリック
-2. 「可視化エクスポート」ボタンでファイル保存
+#### GUI版での可視化操作
 
-#### コマンドライン版
-- テスト完了時に自動的にビジュアライゼーションが生成されます
-- `visualization_output/` ディレクトリに保存されます
+##### 基本的な操作手順
+1. **テスト実行**: まずLPDDRテストを実行してください
+2. **結果可視化ボタン**: テスト完了後、「結果可視化」ボタンをクリック
+3. **可視化表示**: 以下の可視化が自動的に生成・表示されます：
+   - Eye Patternヒートマップ
+   - テストタイムライン
+   - 統合ダッシュボード
+   - サマリーレポート
+
+##### 詳細な操作説明
+
+**ステップ1: テスト実行**
+```
+1. 接続設定を確認（COMポート、ボーレート等）
+2. テスト設定を確認（周波数、パターン、2D Training、Eye Pattern等）
+3. 「テスト開始」ボタンをクリック
+4. テストログで進行状況を確認
+```
+
+**ステップ2: 可視化の実行**
+```
+1. テスト完了後、「結果可視化」ボタンが有効になります
+2. ボタンをクリックすると以下の処理が実行されます：
+   - テスト結果の解析
+   - 可視化データの生成
+   - グラフ・チャートの作成
+   - ファイルの保存
+```
+
+**ステップ3: 結果の確認**
+```
+1. 生成された可視化ファイルの場所：
+   - visualization_output/eye_pattern_results_YYYYMMDD_HHMMSS.png
+   - visualization_output/dashboard_unified_YYYYMMDD_HHMMSS.html
+   - visualization_output/summary_report_unified_YYYYMMDD_HHMMSS.txt
+   - visualization_output/test_timeline_unified_YYYYMMDD_HHMMSS.png
+
+2. ファイルの開き方：
+   - PNGファイル: 画像ビューアーで開く
+   - HTMLファイル: ウェブブラウザで開く
+   - TXTファイル: テキストエディタで開く
+```
+
+#### コマンドライン版での可視化操作
+
+##### 自動可視化
+```bash
+# テスト実行時に自動的に可視化が生成されます
+python lpddr_terminal.py
+
+# 生成されるファイル
+ls visualization_output/
+# eye_pattern_results_20241009_143022.png
+# dashboard_unified_20241009_143022.html
+# summary_report_unified_20241009_143022.txt
+```
+
+##### 手動可視化
+```python
+# Pythonスクリプトで手動実行
+from visualization import LPDDRVisualizer
+
+# 可視化インスタンスの作成
+visualizer = LPDDRVisualizer()
+
+# テスト結果の可視化
+visualizer.plot_test_results(test_results, save_plot=True, show_plot=False)
+```
+
+#### 可視化ファイルの操作
+
+##### ファイルの種類と用途
+1. **Eye Patternヒートマップ** (PNG)
+   - 用途: 信号品質の詳細分析
+   - 開き方: 画像ビューアー、画像編集ソフト
+   - 活用: レポート作成、プレゼンテーション
+
+2. **統合ダッシュボード** (HTML)
+   - 用途: 包括的な結果表示
+   - 開き方: ウェブブラウザ（Chrome、Firefox、Edge等）
+   - 活用: インタラクティブな分析、共有
+
+3. **サマリーレポート** (TXT)
+   - 用途: テキスト形式での結果確認
+   - 開き方: テキストエディタ、メモ帳
+   - 活用: ログ分析、自動処理
+
+4. **テストタイムライン** (PNG)
+   - 用途: 時系列での結果分析
+   - 開き方: 画像ビューアー
+   - 活用: テスト効率の分析
+
+##### ファイルの管理
+```bash
+# 可視化ファイルの一覧表示
+ls -la visualization_output/
+
+# 古いファイルの削除（30日以上前）
+find visualization_output/ -name "*.png" -mtime +30 -delete
+find visualization_output/ -name "*.html" -mtime +30 -delete
+find visualization_output/ -name "*.txt" -mtime +30 -delete
+
+# ファイルのバックアップ
+cp -r visualization_output/ backup_visualization_$(date +%Y%m%d)/
+```
+
+#### 可視化のトラブルシューティング
+
+##### よくある問題と解決方法
+
+**問題1: 「可視化する結果がありません」エラー**
+```
+原因: テストが実行されていない、または結果データが存在しない
+解決方法:
+1. まずLPDDRテストを実行してください
+2. テストが正常に完了していることを確認
+3. テストログでエラーがないことを確認
+```
+
+**問題2: 可視化ファイルが生成されない**
+```
+原因: 必要なライブラリがインストールされていない
+解決方法:
+pip install matplotlib seaborn plotly pandas numpy
+```
+
+**問題3: HTMLダッシュボードが正しく表示されない**
+```
+原因: ブラウザの互換性問題
+解決方法:
+1. 最新のブラウザを使用（Chrome、Firefox、Edge）
+2. JavaScriptが有効になっていることを確認
+3. ローカルファイルの制限を解除
+```
+
+**問題4: Eye Patternヒートマップが空白**
+```
+原因: Eye Patternテストが実行されていない
+解決方法:
+1. config.yamlでenable_eye_pattern: trueを設定
+2. 2D Trainingも有効にする（enable_2d_training: true）
+3. テストを再実行
+```
+
+##### デバッグ方法
+
+**ログの確認**
+```bash
+# 詳細ログを有効にしてテスト実行
+python lpddr_gui.py --debug
+
+# 可視化のデバッグ情報を確認
+python -c "
+from visualization import LPDDRVisualizer
+import logging
+logging.basicConfig(level=logging.DEBUG)
+visualizer = LPDDRVisualizer()
+"
+```
+
+**手動での可視化テスト**
+```python
+# テストデータでの可視化確認
+from visualization import LPDDRVisualizer
+
+# サンプルデータの作成
+test_data = {
+    'eye_pattern_test_1': '#### Finish Diagnostics test (Tx Eye Pattern)\nEye Pattern Test completed successfully.\nQuality: 0.95',
+    'eye_pattern_test_2': '#### Finish Diagnostics test (Rx Eye Pattern)\nEye Pattern Test completed successfully.\nQuality: 0.92'
+}
+
+# 可視化の実行
+visualizer = LPDDRVisualizer()
+result = visualizer.visualize_eye_pattern_results(test_data, save_plot=True)
+print(f"可視化ファイル: {result}")
+```
+
+#### 高度な可視化操作
+
+##### カスタム可視化の作成
+
+**特定の周波数での結果のみ可視化**
+```python
+from visualization import LPDDRVisualizer
+from lpddr_test_automation import TestResultData, TestStep, TestResult
+
+# 特定の周波数の結果のみフィルタリング
+filtered_results = [r for r in test_results if r.frequency == 800]
+
+# 可視化の実行
+visualizer = LPDDRVisualizer()
+visualizer.plot_test_results(filtered_results, save_plot=True)
+```
+
+**複数のテスト結果の比較**
+```python
+# 複数のテスト結果を比較
+visualizer = LPDDRVisualizer()
+
+# 結果1の可視化
+result1 = visualizer.plot_test_results(test_results_1, save_plot=True, show_plot=False)
+
+# 結果2の可視化
+result2 = visualizer.plot_test_results(test_results_2, save_plot=True, show_plot=False)
+
+print(f"比較用ファイル1: {result1}")
+print(f"比較用ファイル2: {result2}")
+```
+
+##### バッチ処理での可視化
+
+**複数のテスト結果を一括可視化**
+```python
+import os
+import glob
+from visualization import LPDDRVisualizer
+
+def batch_visualize_results(results_directory):
+    """複数のテスト結果を一括可視化"""
+    visualizer = LPDDRVisualizer()
+    
+    # 結果ファイルの検索
+    result_files = glob.glob(os.path.join(results_directory, "*.json"))
+    
+    for result_file in result_files:
+        # 結果の読み込み
+        with open(result_file, 'r') as f:
+            test_results = json.load(f)
+        
+        # 可視化の実行
+        output_file = visualizer.plot_test_results(test_results, save_plot=True)
+        print(f"可視化完了: {output_file}")
+
+# 使用例
+batch_visualize_results("test_results/")
+```
+
+##### 可視化結果の自動分析
+
+**結果の自動判定**
+```python
+from visualization import LPDDRVisualizer
+
+def analyze_visualization_results(visualizer, test_results):
+    """可視化結果の自動分析"""
+    unified_data = visualizer.convert_to_unified_data(test_results)
+    
+    # パス率の計算
+    pass_rate = unified_data.summary_stats['pass_rate']
+    
+    # 自動判定
+    if pass_rate >= 90:
+        status = "EXCELLENT"
+        recommendation = "すべてのテストが正常に完了しています"
+    elif pass_rate >= 70:
+        status = "GOOD"
+        recommendation = "一部のテストで問題がありますが、基本的な動作は確認できています"
+    elif pass_rate >= 50:
+        status = "WARNING"
+        recommendation = "複数のテストで問題が発生しています。詳細な調査が必要です"
+    else:
+        status = "CRITICAL"
+        recommendation = "重大な問題が発生しています。ハードウェアの確認が必要です"
+    
+    return {
+        'status': status,
+        'pass_rate': pass_rate,
+        'recommendation': recommendation
+    }
+
+# 使用例
+visualizer = LPDDRVisualizer()
+analysis = analyze_visualization_results(visualizer, test_results)
+print(f"判定結果: {analysis['status']}")
+print(f"推奨事項: {analysis['recommendation']}")
+```
+
+#### 可視化結果の活用方法
+
+##### レポート作成での活用
+
+**Eye Patternヒートマップの活用**
+- 信号品質の問題箇所の特定
+- ハードウェア設計の改善点の提案
+- テスト結果の視覚的な説明
+
+**統合ダッシュボードの活用**
+- ステークホルダーへの結果報告
+- インタラクティブな結果確認
+- 複数のテスト結果の比較
+
+**サマリーレポートの活用**
+- 自動化された結果分析
+- ログファイルとの照合
+- 継続的な品質監視
+
+##### 品質管理での活用
+
+**トレンド分析**
+```python
+# 複数のテスト結果からトレンドを分析
+def analyze_trends(test_results_history):
+    """テスト結果のトレンド分析"""
+    pass_rates = []
+    dates = []
+    
+    for result in test_results_history:
+        pass_rates.append(result['pass_rate'])
+        dates.append(result['date'])
+    
+    # トレンドの計算
+    if len(pass_rates) > 1:
+        trend = "改善" if pass_rates[-1] > pass_rates[0] else "悪化"
+    else:
+        trend = "データ不足"
+    
+    return {
+        'trend': trend,
+        'current_pass_rate': pass_rates[-1] if pass_rates else 0,
+        'historical_data': list(zip(dates, pass_rates))
+    }
+```
+
+**品質ゲートの設定**
+```python
+def quality_gate_check(pass_rate, eye_pattern_quality):
+    """品質ゲートのチェック"""
+    if pass_rate >= 95 and eye_pattern_quality >= 0.9:
+        return "PASS - 製品リリース可能"
+    elif pass_rate >= 80 and eye_pattern_quality >= 0.7:
+        return "CONDITIONAL PASS - 条件付きリリース"
+    else:
+        return "FAIL - リリース不可、改善が必要"
+```
 
 ## 注意事項
 

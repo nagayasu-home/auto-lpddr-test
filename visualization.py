@@ -15,11 +15,48 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any, Union
 import logging
+from dataclasses import dataclass
 
 from constants import TestLimits, FileExtensions
 
 # ログ設定
 logger = logging.getLogger(__name__)
+
+@dataclass
+class UnifiedTestResult:
+    """統一されたテスト結果データ構造"""
+    test_id: str
+    test_type: str  # 'memory', 'eye_pattern', 'diagnostics'
+    frequency: int
+    pattern: int
+    result: str  # 'PASS', 'FAIL', 'UNKNOWN'
+    timestamp: float
+    quality_score: float = 0.0
+    timing: float = 0.0
+    lane: int = 0
+    bit: int = 0
+    raw_data: str = ""
+    metadata: Dict[str, Any] = None
+    
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
+
+@dataclass
+class VisualizationData:
+    """可視化用の統一データ構造"""
+    test_results: List[UnifiedTestResult]
+    eye_pattern_results: Dict[str, Any]
+    summary_stats: Dict[str, Any]
+    timestamp: float
+    
+    def __post_init__(self):
+        if not self.test_results:
+            self.test_results = []
+        if not self.eye_pattern_results:
+            self.eye_pattern_results = {}
+        if not self.summary_stats:
+            self.summary_stats = {}
 
 # 日本語フォント設定
 plt.rcParams['font.family'] = ['DejaVu Sans', 'Hiragino Sans', 'Yu Gothic', 'Meiryo', 'Takao', 'IPAexGothic', 'IPAPGothic', 'VL PGothic', 'Noto Sans CJK JP']
@@ -35,6 +72,7 @@ class LPDDRVisualizer:
             output_dir (str): 出力ディレクトリ
         """
         self.output_dir = output_dir
+        self.eye_pattern_results: Dict[str, Any] = {}
         self._ensure_output_dir()
         
         # スタイル設定
@@ -44,6 +82,274 @@ class LPDDRVisualizer:
     def _ensure_output_dir(self):
         """出力ディレクトリを作成"""
         os.makedirs(self.output_dir, exist_ok=True)
+    
+    def convert_to_unified_data(self, test_results: List[Any], eye_pattern_results: Dict[str, Any] = None) -> VisualizationData:
+        """テスト結果を統一されたデータ構造に変換"""
+        try:
+            import time
+            unified_results = []
+            
+            # 通常のテスト結果を変換
+            for result in test_results:
+                if hasattr(result, 'step') and hasattr(result, 'result'):
+                    unified_result = UnifiedTestResult(
+                        test_id=f"{result.step.value}_{result.frequency}_{result.pattern}",
+                        test_type=self._get_test_type(result.step),
+                        frequency=getattr(result, 'frequency', 0),
+                        pattern=getattr(result, 'pattern', 0),
+                        result=result.result.value if hasattr(result.result, 'value') else str(result.result),
+                        timestamp=getattr(result, 'timestamp', time.time()),
+                        quality_score=0.0,
+                        timing=0.0,
+                        raw_data=getattr(result, 'message', ''),
+                        metadata={'step': result.step.value}
+                    )
+                    unified_results.append(unified_result)
+            
+            # Eye Pattern結果を変換（統一ロジック使用）
+            if eye_pattern_results:
+                logger.info(f"Converting {len(eye_pattern_results)} eye pattern results to unified format")
+                for key, raw_data in eye_pattern_results.items():
+                    # 統一された品質評価ロジックを使用
+                    quality_score = self._extract_quality_from_eye_pattern(raw_data)
+                    
+                    # 品質スコアに基づいてPASS/FAILを判定（統一ロジック）
+                    result_status = "PASS" if quality_score > 0.5 else "FAIL"
+                    
+                    # キーからレーンとビット情報を抽出
+                    lane = 5  # デフォルトレーン
+                    bit = 1   # デフォルトビット
+                    
+                    if 'tx_lane_' in key:
+                        parts = key.split('_')
+                        if len(parts) >= 5:
+                            lane = int(parts[2])
+                            bit = int(parts[4])
+                    elif 'rx_lane_' in key:
+                        parts = key.split('_')
+                        if len(parts) >= 5:
+                            lane = int(parts[2])
+                            bit = int(parts[4])
+                    
+                    unified_result = UnifiedTestResult(
+                        test_id=f"eye_pattern_{key}",
+                        test_type="eye_pattern",
+                        frequency=800,  # デフォルト周波数
+                        pattern=0,
+                        result=result_status,
+                        timestamp=time.time(),
+                        quality_score=quality_score,
+                        timing=0.0,
+                        lane=lane,
+                        bit=bit,
+                        raw_data=raw_data,
+                        metadata={'eye_pattern_key': key, 'quality_score': quality_score}
+                    )
+                    unified_results.append(unified_result)
+                    
+                    logger.info(f"Converted eye pattern result {key}: quality={quality_score:.3f}, result={result_status}")
+            
+            # サマリー統計の計算
+            summary_stats = self._calculate_summary_stats(unified_results)
+            
+            return VisualizationData(
+                test_results=unified_results,
+                eye_pattern_results=eye_pattern_results or {},
+                summary_stats=summary_stats,
+                timestamp=time.time()
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to convert to unified data: {e}")
+            import time
+            return VisualizationData([], {}, {}, time.time())
+    
+    def _get_test_type(self, step) -> str:
+        """テストステップからテストタイプを判定"""
+        step_str = str(step.value).lower()
+        if 'eye' in step_str or 'pattern' in step_str:
+            return 'eye_pattern'
+        elif 'diagnostic' in step_str:
+            return 'diagnostics'
+        else:
+            return 'memory'
+    
+    def _extract_quality_from_eye_pattern(self, raw_data: str) -> float:
+        """Eye Pattern生データから品質スコアを抽出（強化版ロジック）"""
+        try:
+            quality_score = 0.0
+            
+            # 1. 基本的な成功/失敗判定（強化版）
+            if "successfully" in raw_data.lower():
+                quality_score += 0.4
+            elif "pass" in raw_data.lower():
+                quality_score += 0.3
+            elif "complete" in raw_data.lower():
+                quality_score += 0.2
+            
+            # 2. エラーメッセージの検出と重み付け（強化版）
+            error_indicators = {
+                "error": -0.3,
+                "fail": -0.4,
+                "timeout": -0.2,
+                "invalid": -0.2,
+                "abort": -0.3,
+                "exception": -0.3,
+                "threshold": -0.1,  # 閾値エラー
+                "signal quality": -0.2,  # 信号品質エラー
+                "below threshold": -0.2  # 閾値以下エラー
+            }
+            
+            for indicator, penalty in error_indicators.items():
+                if indicator in raw_data.lower():
+                    quality_score += penalty
+            
+            # 3. 成功メッセージの検出と重み付け（強化版）
+            success_indicators = {
+                "pass": 0.1,
+                "success": 0.15,
+                "complete": 0.1,
+                "ok": 0.05,
+                "finished": 0.1,
+                "done": 0.05,
+                "quality": 0.1,  # 品質情報の存在
+                "timing": 0.05   # タイミング情報の存在
+            }
+            
+            for indicator, bonus in success_indicators.items():
+                if indicator in raw_data.lower():
+                    quality_score += bonus
+            
+            # 4. 数値データの解析（強化版）
+            import re
+            numbers = re.findall(r'\d+\.?\d*', raw_data)
+            if numbers:
+                quality_score += 0.1
+                for num_str in numbers:
+                    try:
+                        num = float(num_str)
+                        if 0 < num < 1000:  # 合理的なタイミング範囲
+                            quality_score += 0.05
+                        elif 0.8 <= num <= 1.0:  # 品質スコア範囲
+                            quality_score += 0.1
+                    except ValueError:
+                        continue
+            
+            # 5. データ量の評価（強化版）
+            data_length = len(raw_data)
+            if data_length > 100:  # 十分なデータ量
+                quality_score += 0.1
+            elif data_length < 20:  # データ不足
+                quality_score -= 0.1
+            
+            # 6. 特定のキーワードの検出（強化版）
+            quality_keywords = {
+                "eye pattern": 0.1,
+                "signal": 0.05,
+                "timing": 0.05,
+                "quality": 0.05,
+                "margin": 0.05,
+                "diagnostics": 0.05,  # 診断テスト
+                "tx": 0.02,  # TXテスト
+                "rx": 0.02   # RXテスト
+            }
+            
+            for keyword, bonus in quality_keywords.items():
+                if keyword in raw_data.lower():
+                    quality_score += bonus
+            
+            # 7. パターン別の重み付け（強化版）
+            if "tx" in raw_data.lower() and "rx" in raw_data.lower():
+                quality_score += 0.05  # 両方のテストが含まれている
+            elif "tx" in raw_data.lower():
+                quality_score += 0.02  # TXテスト
+            elif "rx" in raw_data.lower():
+                quality_score += 0.02  # RXテスト
+            
+            # 8. スコアを0.0-1.0の範囲に正規化
+            quality_score = max(0.0, min(1.0, quality_score))
+            
+            # 9. ログ出力（強化版）
+            logger.debug(f"Enhanced quality evaluation: {quality_score:.3f} (data length: {data_length}, indicators: {len([k for k in quality_keywords.keys() if k in raw_data.lower()])})")
+            
+            return quality_score
+            
+        except Exception as e:
+            logger.error(f"Failed to extract quality from eye pattern: {e}")
+            return 0.0
+    
+    def _calculate_summary_stats(self, unified_results: List[UnifiedTestResult]) -> Dict[str, Any]:
+        """統一された結果からサマリー統計を計算"""
+        try:
+            if not unified_results:
+                return {
+                    'total_tests': 0,
+                    'pass_count': 0,
+                    'fail_count': 0,
+                    'pass_rate': 0.0,
+                    'average_quality': 0.0,
+                    'test_types': {},
+                    'frequencies': {},
+                    'patterns': {}
+                }
+            
+            # 基本統計
+            total_tests = len(unified_results)
+            pass_count = sum(1 for r in unified_results if r.result == "PASS")
+            fail_count = total_tests - pass_count
+            pass_rate = (pass_count / total_tests * 100) if total_tests > 0 else 0.0
+            average_quality = sum(r.quality_score for r in unified_results) / total_tests
+            
+            # テストタイプ別統計
+            test_types = {}
+            for result in unified_results:
+                test_type = result.test_type
+                if test_type not in test_types:
+                    test_types[test_type] = {'total': 0, 'pass': 0, 'fail': 0}
+                test_types[test_type]['total'] += 1
+                if result.result == "PASS":
+                    test_types[test_type]['pass'] += 1
+                else:
+                    test_types[test_type]['fail'] += 1
+            
+            # 周波数別統計
+            frequencies = {}
+            for result in unified_results:
+                freq = result.frequency
+                if freq not in frequencies:
+                    frequencies[freq] = {'total': 0, 'pass': 0, 'fail': 0}
+                frequencies[freq]['total'] += 1
+                if result.result == "PASS":
+                    frequencies[freq]['pass'] += 1
+                else:
+                    frequencies[freq]['fail'] += 1
+            
+            # パターン別統計
+            patterns = {}
+            for result in unified_results:
+                pattern = result.pattern
+                if pattern not in patterns:
+                    patterns[pattern] = {'total': 0, 'pass': 0, 'fail': 0}
+                patterns[pattern]['total'] += 1
+                if result.result == "PASS":
+                    patterns[pattern]['pass'] += 1
+                else:
+                    patterns[pattern]['fail'] += 1
+            
+            return {
+                'total_tests': total_tests,
+                'pass_count': pass_count,
+                'fail_count': fail_count,
+                'pass_rate': pass_rate,
+                'average_quality': average_quality,
+                'test_types': test_types,
+                'frequencies': frequencies,
+                'patterns': patterns
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate summary stats: {e}")
+            return {}
         
     def visualize_eye_pattern_results(self, eye_pattern_results: Dict[str, str], 
                                     save_plot: bool = True, show_plot: bool = False) -> str:
@@ -64,19 +370,55 @@ class LPDDRVisualizer:
         tx_results = np.zeros((TestLimits.MAX_LANES.value, TestLimits.MAX_BITS.value))
         rx_results = np.zeros((TestLimits.MAX_LANES.value, TestLimits.MAX_BITS.value))
         
-        # 結果を解析
+        # 結果を解析（統一ロジック使用）
         for key, result in eye_pattern_results.items():
             try:
+                # 統一された品質評価ロジックを使用
+                quality_score = self._extract_quality_from_eye_pattern(result)
+                
+                # 品質スコアに基づいてPASS/FAILを判定
+                is_pass = quality_score > 0.5  # 0.5を閾値とする
+                result_value = quality_score if is_pass else 0.0
+                
+                # キーからレーンとビット情報を抽出（フォールバック付き）
+                lane = 0
+                bit = 0
+                
                 if 'tx_lane_' in key:
                     parts = key.split('_')
-                    lane = int(parts[2])
-                    bit = int(parts[4])
-                    tx_results[lane, bit] = 1 if 'PASS' in result.upper() else 0
+                    if len(parts) >= 5:
+                        lane = int(parts[2])
+                        bit = int(parts[4])
+                    tx_results[lane, bit] = result_value
                 elif 'rx_lane_' in key:
                     parts = key.split('_')
-                    lane = int(parts[2])
-                    bit = int(parts[4])
-                    rx_results[lane, bit] = 1 if 'PASS' in result.upper() else 0
+                    if len(parts) >= 5:
+                        lane = int(parts[2])
+                        bit = int(parts[4])
+                    rx_results[lane, bit] = result_value
+                else:
+                    # デフォルト処理：キーに基づいてTX/RXを判定
+                    if "tx" in key.lower() or "transmit" in key.lower():
+                        # テスト結果のインデックスに基づいてレーンとビットを設定
+                        test_index = int(key.split('_')[-1]) if key.split('_')[-1].isdigit() else 0
+                        lane = test_index % TestLimits.MAX_LANES.value
+                        bit = test_index % TestLimits.MAX_BITS.value
+                        tx_results[lane, bit] = result_value
+                    elif "rx" in key.lower() or "receive" in key.lower():
+                        # テスト結果のインデックスに基づいてレーンとビットを設定
+                        test_index = int(key.split('_')[-1]) if key.split('_')[-1].isdigit() else 0
+                        lane = test_index % TestLimits.MAX_LANES.value
+                        bit = test_index % TestLimits.MAX_BITS.value
+                        rx_results[lane, bit] = result_value
+                    else:
+                        # デフォルトはTXとして扱う
+                        test_index = int(key.split('_')[-1]) if key.split('_')[-1].isdigit() else 0
+                        lane = test_index % TestLimits.MAX_LANES.value
+                        bit = test_index % TestLimits.MAX_BITS.value
+                        tx_results[lane, bit] = result_value
+                
+                logger.debug(f"Eye pattern result {key}: quality={quality_score:.3f}, pass={is_pass}, lane={lane}, bit={bit}")
+                
             except (ValueError, IndexError) as e:
                 logger.warning(f"Failed to parse eye pattern key: {key}, error: {e}")
                 continue
@@ -534,7 +876,7 @@ class LPDDRVisualizer:
     def plot_test_results(self, test_results: List[Any], 
                          save_plot: bool = True, show_plot: bool = False) -> str:
         """
-        テスト結果の統合可視化（README.mdの設計意図に基づく）
+        テスト結果の統合可視化（統一されたデータ構造を使用）
         
         Args:
             test_results (List[Any]): テスト結果リスト
@@ -544,39 +886,38 @@ class LPDDRVisualizer:
         Returns:
             str: 保存されたファイルパス
         """
-        logger.info("Creating comprehensive test results visualization")
+        logger.info("Creating comprehensive test results visualization with unified data structure")
         
         try:
+            # 統一されたデータ構造に変換
+            unified_data = self.convert_to_unified_data(test_results, self.eye_pattern_results)
+            
             # 1. アイパターン結果の可視化
-            if hasattr(self, 'eye_pattern_results') and self.eye_pattern_results:
+            if unified_data.eye_pattern_results:
                 eye_pattern_file = self.visualize_eye_pattern_results(
-                    self.eye_pattern_results, 
+                    unified_data.eye_pattern_results, 
                     save_plot=True, 
                     show_plot=False
                 )
                 logger.info(f"Eye pattern visualization saved: {eye_pattern_file}")
             
-            # 2. テストタイムラインの可視化
-            timeline_file = self.visualize_test_timeline(
-                test_results, 
+            # 2. テストタイムラインの可視化（統一データ使用）
+            timeline_file = self.visualize_test_timeline_unified(
+                unified_data, 
                 save_plot=True, 
                 show_plot=False
             )
             logger.info(f"Timeline visualization saved: {timeline_file}")
             
-            # 3. インタラクティブダッシュボードの生成
-            dashboard_file = self.create_interactive_dashboard(
-                test_results, 
-                getattr(self, 'eye_pattern_results', {}),
+            # 3. インタラクティブダッシュボードの生成（統一データ使用）
+            dashboard_file = self.create_interactive_dashboard_unified(
+                unified_data,
                 save_html=True
             )
             logger.info(f"Interactive dashboard saved: {dashboard_file}")
             
-            # 4. サマリーレポートの生成
-            report_file = self.generate_summary_report(
-                test_results, 
-                getattr(self, 'eye_pattern_results', {})
-            )
+            # 4. サマリーレポートの生成（統一データ使用）
+            report_file = self.generate_summary_report_unified(unified_data)
             logger.info(f"Summary report saved: {report_file}")
             
             # 5. 統合結果の表示
@@ -585,24 +926,24 @@ class LPDDRVisualizer:
                 fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
                 
                 # サブプロット1: テスト結果サマリー
-                self._plot_test_summary(ax1, test_results)
+                self._plot_test_summary_unified(ax1, unified_data)
                 
                 # サブプロット2: 周波数別結果
-                self._plot_frequency_results(ax2, test_results)
+                self._plot_frequency_results_unified(ax2, unified_data)
                 
                 # サブプロット3: パターン別結果
-                self._plot_pattern_results(ax3, test_results)
+                self._plot_pattern_results_unified(ax3, unified_data)
                 
                 # サブプロット4: 統計情報
-                self._plot_statistics(ax4, test_results)
+                self._plot_statistics_unified(ax4, unified_data)
                 
-                plt.suptitle('LPDDR Test Results - Comprehensive Analysis', 
+                plt.suptitle('LPDDR Test Results - Comprehensive Analysis (Unified)', 
                            fontsize=16, fontweight='bold')
                 plt.tight_layout()
                 
                 if save_plot:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filename = f"comprehensive_test_results_{timestamp}.png"
+                    filename = f"comprehensive_test_results_unified_{timestamp}.png"
                     filepath = os.path.join(self.output_dir, filename)
                     plt.savefig(filepath, dpi=300, bbox_inches='tight')
                     logger.info(f"Comprehensive visualization saved: {filepath}")
@@ -738,6 +1079,318 @@ class LPDDRVisualizer:
             
         except Exception as e:
             logger.warning(f"Failed to plot statistics: {e}")
+            ax.text(0.5, 0.5, 'No statistics available', ha='center', va='center', transform=ax.transAxes)
+    
+    # 統一されたデータ構造を使用する新しい可視化メソッド
+    def visualize_test_timeline_unified(self, unified_data: VisualizationData, 
+                                      save_plot: bool = True, show_plot: bool = False) -> str:
+        """統一されたデータ構造を使用したテストタイムライン可視化"""
+        try:
+            if not unified_data.test_results:
+                logger.warning("No test results to visualize")
+                return ""
+            
+            fig, ax = plt.subplots(figsize=(12, 8))
+            
+            # タイムラインの作成
+            timestamps = [datetime.fromtimestamp(r.timestamp) for r in unified_data.test_results]
+            results = [r.result for r in unified_data.test_results]
+            test_types = [r.test_type for r in unified_data.test_results]
+            
+            # 色分け
+            colors = {'PASS': '#2ecc71', 'FAIL': '#e74c3c', 'UNKNOWN': '#f39c12'}
+            markers = {'memory': 'o', 'eye_pattern': 's', 'diagnostics': '^'}
+            
+            for i, (timestamp, result, test_type) in enumerate(zip(timestamps, results, test_types)):
+                color = colors.get(result, '#95a5a6')
+                marker = markers.get(test_type, 'o')
+                ax.scatter(timestamp, i, c=color, marker=marker, s=100, alpha=0.7)
+            
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Test Index')
+            ax.set_title('Test Timeline (Unified Data Structure)')
+            ax.grid(True, alpha=0.3)
+            
+            # 凡例
+            from matplotlib.patches import Patch
+            legend_elements = [
+                Patch(facecolor='#2ecc71', label='PASS'),
+                Patch(facecolor='#e74c3c', label='FAIL'),
+                Patch(facecolor='#f39c12', label='UNKNOWN')
+            ]
+            ax.legend(handles=legend_elements, loc='upper right')
+            
+            if save_plot:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"test_timeline_unified_{timestamp}.png"
+                filepath = os.path.join(self.output_dir, filename)
+                plt.savefig(filepath, dpi=300, bbox_inches='tight')
+                logger.info(f"Unified timeline visualization saved: {filepath}")
+                return filepath
+            
+            if show_plot:
+                plt.show()
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Failed to create unified timeline visualization: {e}")
+            return ""
+    
+    def create_interactive_dashboard_unified(self, unified_data: VisualizationData, 
+                                           save_html: bool = True) -> str:
+        """統一されたデータ構造を使用したインタラクティブダッシュボード"""
+        try:
+            if not unified_data.test_results:
+                logger.warning("No test results for dashboard")
+                return ""
+            
+            # サブプロットの作成
+            fig = make_subplots(
+                rows=2, cols=2,
+                subplot_titles=('Test Results Summary', 'Quality Score Distribution', 
+                              'Test Types Breakdown', 'Frequency Analysis'),
+                specs=[[{"type": "pie"}, {"type": "histogram"}],
+                       [{"type": "bar"}, {"type": "bar"}]]
+            )
+            
+            # 1. テスト結果サマリー（円グラフ）
+            result_counts = {}
+            for result in unified_data.test_results:
+                result_counts[result.result] = result_counts.get(result.result, 0) + 1
+            
+            fig.add_trace(
+                go.Pie(labels=list(result_counts.keys()), 
+                      values=list(result_counts.values()),
+                      name="Test Results"),
+                row=1, col=1
+            )
+            
+            # 2. 品質スコア分布（ヒストグラム）
+            quality_scores = [r.quality_score for r in unified_data.test_results if r.quality_score > 0]
+            if quality_scores:
+                fig.add_trace(
+                    go.Histogram(x=quality_scores, name="Quality Scores"),
+                    row=1, col=2
+                )
+            
+            # 3. テストタイプ別結果（棒グラフ）
+            test_type_stats = unified_data.summary_stats.get('test_types', {})
+            if test_type_stats:
+                types = list(test_type_stats.keys())
+                pass_counts = [test_type_stats[t]['pass'] for t in types]
+                fail_counts = [test_type_stats[t]['fail'] for t in types]
+                
+                fig.add_trace(
+                    go.Bar(x=types, y=pass_counts, name="PASS", marker_color='#2ecc71'),
+                    row=2, col=1
+                )
+                fig.add_trace(
+                    go.Bar(x=types, y=fail_counts, name="FAIL", marker_color='#e74c3c'),
+                    row=2, col=1
+                )
+            
+            # 4. 周波数分析（棒グラフ）
+            freq_stats = unified_data.summary_stats.get('frequencies', {})
+            if freq_stats:
+                frequencies = list(freq_stats.keys())
+                pass_rates = [freq_stats[f]['pass'] / freq_stats[f]['total'] * 100 
+                             for f in frequencies]
+                
+                fig.add_trace(
+                    go.Bar(x=[f"{f}MHz" for f in frequencies], y=pass_rates, 
+                          name="Pass Rate (%)", marker_color='#3498db'),
+                    row=2, col=2
+                )
+            
+            fig.update_layout(
+                title_text="LPDDR Test Results Dashboard (Unified Data Structure)",
+                showlegend=True,
+                height=800
+            )
+            
+            if save_html:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"dashboard_unified_{timestamp}.html"
+                filepath = os.path.join(self.output_dir, filename)
+                fig.write_html(filepath)
+                logger.info(f"Unified dashboard saved: {filepath}")
+                return filepath
+            
+            return ""
+            
+        except Exception as e:
+            logger.error(f"Failed to create unified dashboard: {e}")
+            return ""
+    
+    def generate_summary_report_unified(self, unified_data: VisualizationData) -> str:
+        """統一されたデータ構造を使用したサマリーレポート生成"""
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"summary_report_unified_{timestamp}.txt"
+            filepath = os.path.join(self.output_dir, filename)
+            
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write("LPDDR Test Results Summary Report (Unified Data Structure)\n")
+                f.write("=" * 60 + "\n\n")
+                
+                # 基本統計
+                stats = unified_data.summary_stats
+                f.write(f"Total Tests: {stats.get('total_tests', 0)}\n")
+                f.write(f"PASS: {stats.get('pass_count', 0)} ({stats.get('pass_rate', 0):.1f}%)\n")
+                f.write(f"FAIL: {stats.get('fail_count', 0)}\n")
+                f.write(f"Average Quality Score: {stats.get('average_quality', 0):.2f}\n\n")
+                
+                # テストタイプ別統計
+                f.write("Test Types Summary:\n")
+                f.write("-" * 30 + "\n")
+                for test_type, type_stats in stats.get('test_types', {}).items():
+                    total = type_stats['total']
+                    pass_count = type_stats['pass']
+                    pass_rate = (pass_count / total * 100) if total > 0 else 0
+                    f.write(f"{test_type}: {pass_count}/{total} ({pass_rate:.1f}%)\n")
+                
+                f.write("\n")
+                
+                # 周波数別統計
+                f.write("Frequency Analysis:\n")
+                f.write("-" * 30 + "\n")
+                for freq, freq_stats in stats.get('frequencies', {}).items():
+                    total = freq_stats['total']
+                    pass_count = freq_stats['pass']
+                    pass_rate = (pass_count / total * 100) if total > 0 else 0
+                    f.write(f"{freq}MHz: {pass_count}/{total} ({pass_rate:.1f}%)\n")
+                
+                f.write("\n")
+                
+                # 詳細結果
+                f.write("Detailed Results:\n")
+                f.write("-" * 30 + "\n")
+                for result in unified_data.test_results:
+                    f.write(f"ID: {result.test_id}\n")
+                    f.write(f"  Type: {result.test_type}\n")
+                    f.write(f"  Frequency: {result.frequency}MHz\n")
+                    f.write(f"  Pattern: {result.pattern}\n")
+                    f.write(f"  Result: {result.result}\n")
+                    f.write(f"  Quality Score: {result.quality_score:.2f}\n")
+                    f.write(f"  Timestamp: {datetime.fromtimestamp(result.timestamp)}\n")
+                    f.write("\n")
+            
+            logger.info(f"Unified summary report saved: {filepath}")
+            return filepath
+            
+        except Exception as e:
+            logger.error(f"Failed to generate unified summary report: {e}")
+            return ""
+    
+    def _plot_test_summary_unified(self, ax, unified_data: VisualizationData):
+        """統一データを使用したテスト結果サマリーのプロット"""
+        try:
+            stats = unified_data.summary_stats
+            labels = ['PASS', 'FAIL']
+            sizes = [stats.get('pass_count', 0), stats.get('fail_count', 0)]
+            colors = ['#2ecc71', '#e74c3c']
+            
+            if sum(sizes) > 0:
+                ax.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=90)
+            else:
+                ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+            
+            ax.set_title('Test Results Summary (Unified)', fontweight='bold')
+            
+        except Exception as e:
+            logger.warning(f"Failed to plot unified test summary: {e}")
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+    
+    def _plot_frequency_results_unified(self, ax, unified_data: VisualizationData):
+        """統一データを使用した周波数別結果のプロット"""
+        try:
+            freq_stats = unified_data.summary_stats.get('frequencies', {})
+            if freq_stats:
+                frequencies = list(freq_stats.keys())
+                pass_counts = [freq_stats[f]['pass'] for f in frequencies]
+                fail_counts = [freq_stats[f]['fail'] for f in frequencies]
+                
+                x = range(len(frequencies))
+                width = 0.35
+                
+                ax.bar([i - width/2 for i in x], pass_counts, width, label='PASS', color='#2ecc71')
+                ax.bar([i + width/2 for i in x], fail_counts, width, label='FAIL', color='#e74c3c')
+                
+                ax.set_xlabel('Frequency (MHz)')
+                ax.set_ylabel('Test Count')
+                ax.set_title('Results by Frequency (Unified)', fontweight='bold')
+                ax.set_xticks(x)
+                ax.set_xticklabels(frequencies)
+                ax.legend()
+            else:
+                ax.text(0.5, 0.5, 'No frequency data available', ha='center', va='center', transform=ax.transAxes)
+                
+        except Exception as e:
+            logger.warning(f"Failed to plot unified frequency results: {e}")
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+    
+    def _plot_pattern_results_unified(self, ax, unified_data: VisualizationData):
+        """統一データを使用したパターン別結果のプロット"""
+        try:
+            pattern_stats = unified_data.summary_stats.get('patterns', {})
+            if pattern_stats:
+                patterns = list(pattern_stats.keys())
+                pass_counts = [pattern_stats[p]['pass'] for p in patterns]
+                fail_counts = [pattern_stats[p]['fail'] for p in patterns]
+                
+                x = range(len(patterns))
+                width = 0.35
+                
+                ax.bar([i - width/2 for i in x], pass_counts, width, label='PASS', color='#2ecc71')
+                ax.bar([i + width/2 for i in x], fail_counts, width, label='FAIL', color='#e74c3c')
+                
+                ax.set_xlabel('Test Pattern')
+                ax.set_ylabel('Test Count')
+                ax.set_title('Results by Pattern (Unified)', fontweight='bold')
+                ax.set_xticks(x)
+                ax.set_xticklabels([f"Pattern {p}" for p in patterns])
+                ax.legend()
+            else:
+                ax.text(0.5, 0.5, 'No pattern data available', ha='center', va='center', transform=ax.transAxes)
+                
+        except Exception as e:
+            logger.warning(f"Failed to plot unified pattern results: {e}")
+            ax.text(0.5, 0.5, 'No data available', ha='center', va='center', transform=ax.transAxes)
+    
+    def _plot_statistics_unified(self, ax, unified_data: VisualizationData):
+        """統一データを使用した統計情報のプロット"""
+        try:
+            stats = unified_data.summary_stats
+            total_tests = stats.get('total_tests', 0)
+            
+            if total_tests == 0:
+                ax.text(0.5, 0.5, 'No test results available', ha='center', va='center', transform=ax.transAxes)
+                ax.set_title('Test Statistics (Unified)', fontweight='bold')
+                ax.axis('off')
+                return
+            
+            pass_count = stats.get('pass_count', 0)
+            fail_count = stats.get('fail_count', 0)
+            pass_rate = stats.get('pass_rate', 0)
+            average_quality = stats.get('average_quality', 0)
+            
+            stats_text = f"""
+            Total Tests: {total_tests}
+            PASS: {pass_count} ({pass_rate:.1f}%)
+            FAIL: {fail_count}
+            Average Quality: {average_quality:.2f}
+            
+            Success Rate: {pass_rate:.1f}%
+            """
+            
+            ax.text(0.1, 0.5, stats_text, transform=ax.transAxes, fontsize=12,
+                   verticalalignment='center', bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue"))
+            ax.set_title('Test Statistics (Unified)', fontweight='bold')
+            ax.axis('off')
+            
+        except Exception as e:
+            logger.warning(f"Failed to plot unified statistics: {e}")
             ax.text(0.5, 0.5, 'No statistics available', ha='center', va='center', transform=ax.transAxes)
 
 

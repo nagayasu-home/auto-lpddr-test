@@ -9,7 +9,7 @@ import time
 import re
 import logging
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from enum import Enum
 from dataclasses import dataclass
 
@@ -99,6 +99,18 @@ class EyePatternConfig:
     continue_to_rx_after_tx: bool = False
 
 @dataclass
+class EyePatternResult:
+    """Eye Patternテスト結果の詳細データ"""
+    lane: int
+    bit: int
+    pattern_type: str  # 'tx' or 'rx'
+    result: str        # 'PASS' or 'FAIL'
+    timing: float      # タイミング情報
+    quality: float     # 信号品質スコア
+    timestamp: float   # テスト実行時刻
+    raw_data: str      # 生データ
+
+@dataclass
 class TestConfig:
     """テスト設定"""
     port: str = "COM3"  # Windows: COM3, Linux: /dev/ttyUSB0
@@ -154,6 +166,7 @@ class LPDDRAutomation:
         self.test_results: List[TestResultData] = []
         self.current_step = TestStep.FREQUENCY_SELECT
         self.eye_pattern_results: Dict[str, str] = {}
+        self.detailed_eye_pattern_results: List[EyePatternResult] = []
         self.visualizer = LPDDRVisualizer()
         self.gui_callback = gui_callback  # GUIへのコールバック関数
         self.gui_status_callback = gui_status_callback  # GUIのテスト状況更新用コールバック
@@ -461,6 +474,7 @@ class LPDDRAutomation:
                 logger.info(f"2D training setting: enable_2d_training = {self.config.enable_2d_training}")
                 
                 if self.config.enable_2d_training:
+                    log_to_gui("=== 2D Training Test Started ===", "INFO", self.gui_callback)
                     training_cmd = TestCommands.ENABLE_2D_TRAINING.value
                     logger.info(f"Sending 2D training enable command: '{training_cmd}'")
                     for i, char in enumerate(training_cmd):
@@ -473,12 +487,15 @@ class LPDDRAutomation:
                     # 2Dトレーニング完了待機（実際のプロンプトに合わせて修正）
                     # "Training Complete 7"を待機
                     self.wait_for_prompt("Training Complete 7")
+                    log_to_gui("2D Training completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
                 else:
+                    log_to_gui("=== 2D Training Test Disabled ===", "INFO", self.gui_callback)
                     training_cmd = TestCommands.DISABLE_2D_TRAINING.value
                     logger.info(f"Sending 2D training disable command: '{training_cmd}'")
                     for i, char in enumerate(training_cmd):
                         self.serial_conn.write(char.encode('utf-8'))
                         time.sleep(0.1)
+                    log_to_gui("2D Training disabled - Test Result: SKIPPED", "INFO", self.gui_callback)
                     logger.info("2D training disabled")
                     # 送信完了後にコマンドをログ出力
                     if hasattr(self, 'gui_callback') and self.gui_callback:
@@ -1203,6 +1220,8 @@ class LPDDRAutomation:
                         # 結果を保存
                         if response_buffer:
                             self.eye_pattern_results[f"eye_pattern_test_{int(time.time())}"] = response_buffer
+                            # 詳細解析を実行
+                            self._analyze_eye_pattern_results(response_buffer)
                         return True
                         
                 time.sleep(0.1)
@@ -1218,6 +1237,7 @@ class LPDDRAutomation:
     def _run_comprehensive_eye_pattern_test(self):
         """TeraTerm実行例に基づく包括的なアイパターンテスト実行"""
         try:
+            log_to_gui("=== Eye Pattern Test Started ===", "INFO", self.gui_callback)
             logger.info("Starting comprehensive eye pattern test procedure")
             
             # 1. 診断モード選択（アイパターンテスト）
@@ -1285,15 +1305,18 @@ class LPDDRAutomation:
             success = self._execute_eye_pattern_test()
             
             if success:
+                log_to_gui("Tx Eye Pattern Test completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
                 logger.info("Tx Eye pattern test completed successfully")
                 
                 # 6. 診断テスト継続選択（Tx後にRxも実行）
                 logger.info("Step 6: Handling diagnostics continuation")
                 self._handle_diagnostics_continuation_teraterm()
             else:
+                log_to_gui("Tx Eye Pattern Test failed - Test Result: FAIL", "ERROR", self.gui_callback)
                 logger.warning("Tx Eye pattern test did not complete successfully")
             
         except Exception as e:
+            log_to_gui(f"Eye Pattern Test failed with error: {e}", "ERROR", self.gui_callback)
             logger.error(f"Comprehensive eye pattern test failed: {e}")
     
     def _handle_diagnostics_continuation(self):
@@ -1423,8 +1446,10 @@ class LPDDRAutomation:
             success = self._execute_eye_pattern_test()
             
             if success:
+                log_to_gui("Rx Eye Pattern Test completed successfully - Test Result: PASS", "SUCCESS", self.gui_callback)
                 logger.info("Rx Eye Pattern test completed successfully")
             else:
+                log_to_gui("Rx Eye Pattern Test failed - Test Result: FAIL", "ERROR", self.gui_callback)
                 logger.warning("Rx Eye Pattern test did not complete successfully")
             
             # 6. 最終的な診断テスト終了
@@ -1433,9 +1458,11 @@ class LPDDRAutomation:
             if "Repeat diagnostics?" not in response:
                 time.sleep(0.5)  # 短時間待機
             self.send_command("0")  # Finish
+            log_to_gui("=== Eye Pattern Test Sequence Completed ===", "INFO", self.gui_callback)
             logger.info("Diagnostics test sequence completed")
             
         except Exception as e:
+            log_to_gui(f"Rx Eye Pattern Test failed with error: {e}", "ERROR", self.gui_callback)
             logger.error(f"Rx Eye Pattern test failed: {e}")
     
     def _handle_eye_pattern_continuation(self):
@@ -1464,6 +1491,249 @@ class LPDDRAutomation:
                     
         except TimeoutError:
             logger.warning("Eye pattern continuation prompt not found")
+    
+    def _analyze_eye_pattern_results(self, raw_data: str):
+        """Eye Patternテスト結果の詳細解析"""
+        try:
+            logger.info("Analyzing eye pattern test results...")
+            
+            # 現在の設定からレーンとビット情報を取得
+            current_lane = int(getattr(self.config.eye_pattern, 'default_lane', '5'))
+            current_byte = int(getattr(self.config.eye_pattern, 'default_byte', '1'))
+            
+            # テスト結果の解析
+            result_status = "PASS" if "successfully" in raw_data.lower() else "FAIL"
+            
+            # 信号品質の評価
+            quality_score = self._evaluate_signal_quality(raw_data)
+            
+            # タイミング情報の抽出
+            timing_info = self._extract_timing_info(raw_data)
+            
+            # TX Eye Pattern結果の作成
+            tx_result = EyePatternResult(
+                lane=current_lane,
+                bit=current_byte,
+                pattern_type="tx",
+                result=result_status,
+                timing=timing_info,
+                quality=quality_score,
+                timestamp=time.time(),
+                raw_data=raw_data
+            )
+            self.detailed_eye_pattern_results.append(tx_result)
+            
+            logger.info(f"TX Eye Pattern Result - Lane: {current_lane}, Bit: {current_byte}, Result: {result_status}, Quality: {quality_score:.2f}")
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze eye pattern results: {e}")
+    
+    def _evaluate_signal_quality(self, raw_data: str) -> float:
+        """信号品質の詳細評価"""
+        try:
+            quality_score = 0.0
+            
+            # 1. 基本的な成功/失敗判定
+            if "successfully" in raw_data.lower():
+                quality_score += 0.4
+            elif "pass" in raw_data.lower():
+                quality_score += 0.3
+            elif "complete" in raw_data.lower():
+                quality_score += 0.2
+            
+            # 2. エラーメッセージの検出と重み付け
+            error_indicators = {
+                "error": -0.3,
+                "fail": -0.4,
+                "timeout": -0.2,
+                "invalid": -0.2,
+                "abort": -0.3,
+                "exception": -0.3
+            }
+            
+            for indicator, penalty in error_indicators.items():
+                if indicator in raw_data.lower():
+                    quality_score += penalty
+            
+            # 3. 成功メッセージの検出と重み付け
+            success_indicators = {
+                "pass": 0.1,
+                "success": 0.15,
+                "complete": 0.1,
+                "ok": 0.05,
+                "finished": 0.1,
+                "done": 0.05
+            }
+            
+            for indicator, bonus in success_indicators.items():
+                if indicator in raw_data.lower():
+                    quality_score += bonus
+            
+            # 4. 数値データの解析（タイミング、レイテンシなど）
+            import re
+            numbers = re.findall(r'\d+\.?\d*', raw_data)
+            if numbers:
+                # 数値が存在する場合は品質向上の指標
+                quality_score += 0.1
+                
+                # 特定の数値パターンの検出
+                for num_str in numbers:
+                    try:
+                        num = float(num_str)
+                        # タイミング値の範囲チェック
+                        if 0 < num < 1000:  # 合理的なタイミング範囲
+                            quality_score += 0.05
+                    except ValueError:
+                        continue
+            
+            # 5. データ量の評価
+            data_length = len(raw_data)
+            if data_length > 100:  # 十分なデータ量
+                quality_score += 0.1
+            elif data_length < 20:  # データ不足
+                quality_score -= 0.1
+            
+            # 6. 特定のキーワードの検出
+            quality_keywords = {
+                "eye pattern": 0.1,
+                "signal": 0.05,
+                "timing": 0.05,
+                "quality": 0.05,
+                "margin": 0.05
+            }
+            
+            for keyword, bonus in quality_keywords.items():
+                if keyword in raw_data.lower():
+                    quality_score += bonus
+            
+            # 7. スコアを0.0-1.0の範囲に正規化
+            quality_score = max(0.0, min(1.0, quality_score))
+            
+            # 8. ログ出力
+            logger.debug(f"Signal quality evaluation: {quality_score:.3f} (data length: {data_length})")
+            
+            return quality_score
+            
+        except Exception as e:
+            logger.error(f"Failed to evaluate signal quality: {e}")
+            return 0.0
+    
+    def _extract_timing_info(self, raw_data: str) -> float:
+        """タイミング情報の詳細抽出"""
+        try:
+            import re
+            
+            # 1. タイミング関連のキーワードを検索
+            timing_patterns = [
+                r'timing[:\s]*(\d+\.?\d*)',
+                r'time[:\s]*(\d+\.?\d*)',
+                r'latency[:\s]*(\d+\.?\d*)',
+                r'delay[:\s]*(\d+\.?\d*)',
+                r'ns[:\s]*(\d+\.?\d*)',  # ナノ秒
+                r'us[:\s]*(\d+\.?\d*)',  # マイクロ秒
+                r'ms[:\s]*(\d+\.?\d*)',  # ミリ秒
+            ]
+            
+            for pattern in timing_patterns:
+                matches = re.findall(pattern, raw_data, re.IGNORECASE)
+                if matches:
+                    try:
+                        timing_value = float(matches[0])
+                        logger.debug(f"Extracted timing info: {timing_value} (pattern: {pattern})")
+                        return timing_value
+                    except ValueError:
+                        continue
+            
+            # 2. 一般的な数値パターンを検索
+            numbers = re.findall(r'\d+\.?\d*', raw_data)
+            if numbers:
+                # 複数の数値がある場合は、最も合理的な範囲のものを選択
+                for num_str in numbers:
+                    try:
+                        num = float(num_str)
+                        # タイミング値として合理的な範囲（0.1ns - 1000ms）
+                        if 0.1 <= num <= 1000000:
+                            logger.debug(f"Extracted timing info from general pattern: {num}")
+                            return num
+                    except ValueError:
+                        continue
+                
+                # 合理的な範囲の数値がない場合は最初の数値を使用
+                try:
+                    first_num = float(numbers[0])
+                    logger.debug(f"Using first number as timing info: {first_num}")
+                    return first_num
+                except ValueError:
+                    pass
+            
+            # 3. デフォルト値
+            logger.debug("No timing information found, using default value 0.0")
+            return 0.0
+            
+        except Exception as e:
+            logger.error(f"Failed to extract timing info: {e}")
+            return 0.0
+    
+    def get_eye_pattern_analysis_summary(self) -> Dict[str, Any]:
+        """Eye Patternテスト結果の分析サマリーを取得"""
+        try:
+            if not self.detailed_eye_pattern_results:
+                return {
+                    'total_tests': 0,
+                    'pass_count': 0,
+                    'fail_count': 0,
+                    'pass_rate': 0.0,
+                    'average_quality': 0.0,
+                    'lane_summary': {},
+                    'bit_summary': {}
+                }
+            
+            # 基本統計
+            total_tests = len(self.detailed_eye_pattern_results)
+            pass_count = sum(1 for r in self.detailed_eye_pattern_results if r.result == "PASS")
+            fail_count = total_tests - pass_count
+            pass_rate = (pass_count / total_tests * 100) if total_tests > 0 else 0.0
+            average_quality = sum(r.quality for r in self.detailed_eye_pattern_results) / total_tests
+            
+            # レーン別サマリー
+            lane_summary = {}
+            for result in self.detailed_eye_pattern_results:
+                lane = result.lane
+                if lane not in lane_summary:
+                    lane_summary[lane] = {'total': 0, 'pass': 0, 'fail': 0, 'quality': []}
+                lane_summary[lane]['total'] += 1
+                if result.result == "PASS":
+                    lane_summary[lane]['pass'] += 1
+                else:
+                    lane_summary[lane]['fail'] += 1
+                lane_summary[lane]['quality'].append(result.quality)
+            
+            # ビット別サマリー
+            bit_summary = {}
+            for result in self.detailed_eye_pattern_results:
+                bit = result.bit
+                if bit not in bit_summary:
+                    bit_summary[bit] = {'total': 0, 'pass': 0, 'fail': 0, 'quality': []}
+                bit_summary[bit]['total'] += 1
+                if result.result == "PASS":
+                    bit_summary[bit]['pass'] += 1
+                else:
+                    bit_summary[bit]['fail'] += 1
+                bit_summary[bit]['quality'].append(result.quality)
+            
+            return {
+                'total_tests': total_tests,
+                'pass_count': pass_count,
+                'fail_count': fail_count,
+                'pass_rate': pass_rate,
+                'average_quality': average_quality,
+                'lane_summary': lane_summary,
+                'bit_summary': bit_summary
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get eye pattern analysis summary: {e}")
+            return {}
 
 def main():
     """メイン関数"""
